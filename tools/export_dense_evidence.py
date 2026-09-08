@@ -11,6 +11,90 @@ from pathlib import Path
 MIN_VIEWS = 3
 MIN_POINTS = 1_000
 MIN_VOLUME_RATIO = 0.05
+# A point on a real surface sits among other points recovered from the same surface.
+# Isolated points are stereo noise, which appears on textureless walls where matching
+# is unreliable. This only ever removes points; it never moves or invents them.
+NEIGHBOUR_RADIUS_FRACTION = 1 / 250
+MIN_NEIGHBOURS = 4
+# Depth is only well constrained when the supporting photographs see a point from
+# genuinely different directions. Near-parallel viewing rays let a point slide along
+# the ray, which appears as a streak of false geometry across textureless walls.
+MIN_TRIANGULATION_DEGREES = 5.0
+
+
+def parse_mvs_order(path: Path) -> list[str]:
+    """Image names in the order COLMAP's visibility indices refer to."""
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("__") and "," not in line
+    ]
+
+
+def max_triangulation_angle(
+    point: tuple[float, float, float],
+    centers: list[tuple[float, float, float]],
+) -> float:
+    """Largest angle, in degrees, subtended at the point between two supporting cameras."""
+    rays = []
+    for center in centers:
+        dx, dy, dz = center[0] - point[0], center[1] - point[1], center[2] - point[2]
+        length = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if length > 0:
+            rays.append((dx / length, dy / length, dz / length))
+    widest = 0.0
+    for index, first in enumerate(rays):
+        for second in rays[index + 1:]:
+            dot = max(-1.0, min(1.0, sum(a * b for a, b in zip(first, second))))
+            widest = max(widest, math.degrees(math.acos(dot)))
+    return widest
+
+
+def reject_isolated_points(points: list[dict], diagonal: float) -> list[dict]:
+    """Drop points with too few neighbours to be part of a recovered surface."""
+    radius = diagonal * NEIGHBOUR_RADIUS_FRACTION
+    if radius <= 0:
+        return points
+    grid: dict[tuple[int, int, int], list[dict]] = {}
+    for point in points:
+        cell = (
+            int(math.floor(point["x"] / radius)),
+            int(math.floor(point["y"] / radius)),
+            int(math.floor(point["z"] / radius)),
+        )
+        grid.setdefault(cell, []).append(point)
+
+    kept = []
+    squared = radius * radius
+    for point in points:
+        cx = int(math.floor(point["x"] / radius))
+        cy = int(math.floor(point["y"] / radius))
+        cz = int(math.floor(point["z"] / radius))
+        neighbours = 0
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for other in grid.get((cx + dx, cy + dy, cz + dz), ()):
+                        if other is point:
+                            continue
+                        distance = (
+                            (other["x"] - point["x"]) ** 2
+                            + (other["y"] - point["y"]) ** 2
+                            + (other["z"] - point["z"]) ** 2
+                        )
+                        if distance <= squared:
+                            neighbours += 1
+                            if neighbours >= MIN_NEIGHBOURS:
+                                break
+                    if neighbours >= MIN_NEIGHBOURS:
+                        break
+                if neighbours >= MIN_NEIGHBOURS:
+                    break
+            if neighbours >= MIN_NEIGHBOURS:
+                break
+        if neighbours >= MIN_NEIGHBOURS:
+            kept.append(point)
+    return kept
 
 
 def read_exact(file, size: int, context: str) -> bytes:
@@ -70,25 +154,54 @@ def percentile(values: list[float], fraction: float) -> float:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
 
 
-def camera_center(fields: list[str]) -> tuple[float, float, float]:
-    qw, qx, qy, qz, tx, ty, tz = (float(value) for value in fields[1:8])
-    rotation = (
+def rotation_matrix(qw: float, qx: float, qy: float, qz: float) -> tuple[tuple[float, ...], ...]:
+    """World-to-camera rotation from a COLMAP quaternion."""
+    return (
         (1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)),
         (2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)),
         (2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)),
     )
+
+
+def camera_center(fields: list[str]) -> tuple[float, float, float]:
+    qw, qx, qy, qz, tx, ty, tz = (float(value) for value in fields[1:8])
+    rotation = rotation_matrix(qw, qx, qy, qz)
     return tuple(-sum(rotation[row][column] * (tx, ty, tz)[row] for row in range(3)) for column in range(3))
 
 
-def parse_registered_images(path: Path) -> tuple[list[str], list[tuple[float, float, float]]]:
+def parse_registered_images(path: Path) -> tuple[list[str], list[tuple[float, float, float]], list[dict]]:
     names = []
     centers = []
+    poses = []
     for line in path.read_text(encoding="utf-8").splitlines():
         fields = line.split()
         if len(fields) >= 10 and fields[0].isdigit() and fields[8].isdigit():
-            names.append(" ".join(fields[9:]))
-            centers.append(camera_center(fields))
-    return sorted(names), centers
+            name = " ".join(fields[9:])
+            center = camera_center(fields)
+            names.append(name)
+            centers.append(center)
+            qw, qx, qy, qz = (float(value) for value in fields[1:5])
+            tx, ty, tz = (float(value) for value in fields[5:8])
+            poses.append({
+                "name": name,
+                "qw": qw, "qx": qx, "qy": qy, "qz": qz,
+                "tx": tx, "ty": ty, "tz": tz,
+                "cx": center[0], "cy": center[1], "cz": center[2],
+            })
+    poses.sort(key=lambda pose: pose["name"])
+    return sorted(names), centers, poses
+
+
+def parse_focal_normalized(path: Path) -> float | None:
+    """Focal length as a fraction of image width, so the viewer can match the photographs' field of view."""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if len(fields) >= 5 and fields[0].isdigit():
+            width = float(fields[2])
+            focal = float(fields[4])
+            if width > 0 and math.isfinite(focal):
+                return focal / width
+    return None
 
 
 def median_camera_baseline(centers: list[tuple[float, float, float]]) -> float:
@@ -140,11 +253,16 @@ def main() -> int:
     parser.add_argument("--visibility", type=Path, required=True)
     parser.add_argument("--source-images", type=Path, required=True, help="Direct source raster directory")
     parser.add_argument("--registered-images-text", type=Path, required=True)
+    parser.add_argument(
+        "--mvs-order",
+        type=Path,
+        help="dense/stereo/patch-match.cfg, giving the image order the visibility indices use",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
     source_names = sorted(path.name for path in args.source_images.iterdir() if path.is_file())
-    registered_names, camera_centers = parse_registered_images(args.registered_images_text)
+    registered_names, camera_centers, camera_poses = parse_registered_images(args.registered_images_text)
     if len(registered_names) < MIN_VIEWS:
         raise RuntimeError("The dense workspace has too few registered photographs.")
     vertices = read_ply(args.ply)
@@ -152,15 +270,39 @@ def main() -> int:
     if len(vertices) != len(visibility):
         raise RuntimeError("COLMAP point and visibility record counts do not agree.")
     accepted = []
+    weak_triangulation = 0
+    mvs_names = parse_mvs_order(args.mvs_order) if args.mvs_order else []
+    centers_by_name = {
+        pose["name"]: (pose["cx"], pose["cy"], pose["cz"]) for pose in camera_poses
+    }
+    mvs_centers = [centers_by_name.get(name) for name in mvs_names]
     for vertex, views in zip(vertices, visibility):
-        if len(views) >= MIN_VIEWS:
-            x, y, z, red, green, blue = vertex
-            accepted.append({
-                "x": x, "y": y, "z": z, "r": red, "g": green, "b": blue,
-                "support": len(views),
-            })
+        if len(views) < MIN_VIEWS:
+            continue
+        x, y, z, red, green, blue = vertex
+        if mvs_centers:
+            supporting = [
+                mvs_centers[index]
+                for index in views
+                if 0 <= index < len(mvs_centers) and mvs_centers[index] is not None
+            ]
+            if len(supporting) >= 2 and max_triangulation_angle((x, y, z), supporting) < MIN_TRIANGULATION_DEGREES:
+                weak_triangulation += 1
+                continue
+        accepted.append({
+            "x": x, "y": y, "z": z, "r": red, "g": green, "b": blue,
+            "support": len(views),
+        })
     if len(accepted) < MIN_POINTS:
         raise RuntimeError("Too little multi-view-supported dense geometry was recovered.")
+    multi_view_points = len(accepted)
+    spans = [
+        percentile([point[axis] for point in accepted], 0.95) - percentile([point[axis] for point in accepted], 0.05)
+        for axis in ("x", "y", "z")
+    ]
+    accepted = reject_isolated_points(accepted, math.sqrt(sum(span * span for span in spans)))
+    if len(accepted) < MIN_POINTS:
+        raise RuntimeError("Too little of the dense geometry forms connected surfaces.")
     spans = [
         percentile([point[axis] for point in accepted], 0.95) - percentile([point[axis] for point in accepted], 0.05)
         for axis in ("x", "y", "z")
@@ -184,6 +326,10 @@ def main() -> int:
         "sourceImages": source_names,
         "registeredPhotoNames": registered_names,
         "rejectedPhotoNames": sorted(set(source_names) - set(registered_names)),
+        "cameraPoses": camera_poses,
+        "focalLengthNormalized": parse_focal_normalized(
+            args.registered_images_text.with_name("cameras.txt")
+        ),
         "diagnostics": {
             "qualityGatePassed": True,
             "qualityGateFailures": [],
@@ -192,6 +338,9 @@ def main() -> int:
             "representation": "dense-geometric-fusion",
             "minimumDistinctViews": MIN_VIEWS,
             "candidatePoints": len(vertices),
+            "multiViewPoints": multi_view_points,
+            "weaklyTriangulatedRejected": weak_triangulation,
+            "isolatedPointsRejected": multi_view_points - len(accepted),
             "acceptedPoints": len(accepted),
             "supportHistogram": dict(sorted(Counter(point["support"] for point in accepted).items())),
             "landmarkRobustSpans": spans,

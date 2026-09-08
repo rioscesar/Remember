@@ -142,6 +142,25 @@ The single-surface gate (thinnest principal spread at least 5% of widest) reject
 
 **Lesson recorded:** a degenerate output was attributed to the person's photographs before the photographs were examined. Objective output metrics identified *that* the scene was degenerate but not *why*, and the input-side conclusion drawn from them was false. Inspect inputs and pipeline configuration before attributing a reconstruction failure to capture.
 
+### Coverage, not confidence, is the limit (2026-09-07)
+
+On device the corrected scene read as artwork and edges floating in black. Two candidate explanations were tested rather than assumed.
+
+*Filter strictness.* Depth-map coverage was measured directly. The PatchMatch thresholds chosen for the first spike were far stricter than COLMAP's defaults and kept only 2.6% of depth pixels, which is what produced the blackout. Relaxing them to the defaults raised coverage to 12.2% and fused 64,843 candidates.
+
+*Geometric ambiguity.* The vertical streaks in the relaxed output were suspected to be points sliding along an under-constrained viewing ray. This was tested by computing, for every fused point, the widest angle subtended at that point between any two photographs that support it, using the fusion visibility record and the recovered camera centres. The smallest such angle in the entire cloud is 17.8°, and the median is 76.2°:
+
+| Percentile | Widest supporting angle |
+|---|---:|
+| Minimum | 17.8° |
+| 5th | 21.1° |
+| Median | 76.2° |
+| 95th | 130.2° |
+
+No point is weakly triangulated, so the streaks are not reconstruction noise. They are genuine recovered geometry: photometric stereo resolves depth where there is texture, which in a room means door frames, wall corners, curtain folds and hung artwork. The blank painted wall between them yields no correspondence and therefore, correctly, no points.
+
+The conclusion is that this scene is limited by depth-map coverage, not by confidence, and that the remaining honest levers are input resolution and PatchMatch propagation rather than further filtering. A triangulation-angle gate was nevertheless retained in the exporter as a guard for future scenes with weaker baselines; it rejects nothing here, which is itself the finding.
+
 ## Not yet demonstrated
 
 This repository does not include sensitive sample imagery or a bundled COLMAP binary, so a physical-device end-to-end run and latency benchmark remain required before declaring Milestone 0 complete. AR portal work is intentionally deferred.

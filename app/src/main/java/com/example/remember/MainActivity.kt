@@ -150,10 +150,26 @@ class MainActivity : AppCompatActivity() {
     private fun showScene(memory: Memory) {
         val reconstruction = memory.reconstruction ?: return
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        layout.addView(EvidenceSceneView(this, reconstruction.points), LinearLayout.LayoutParams(
+        val scene = EvidenceSceneView(
+            this,
+            reconstruction.points,
+            reconstruction.cameraPoses,
+            reconstruction.focalLengthNormalized,
+        )
+        layout.addView(scene, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f,
         ))
-        layout.addView(body("Drag to look around. These points are recovered from matching photographs; their gradual disappearance marks where photographic support becomes sparse."))
+        if (reconstruction.cameraPoses.isNotEmpty()) {
+            val caption = body(scene.viewpointLabel)
+            layout.addView(caption)
+            layout.addView(body("You are standing where this photograph was taken. Drag to look around. Points fade out where photographic support ends."))
+            layout.addView(button("Move to next photograph") {
+                scene.nextViewpoint()
+                caption.text = scene.viewpointLabel
+            })
+        } else {
+            layout.addView(body("Drag to look around. These points are recovered from matching photographs; their gradual disappearance marks where photographic support becomes sparse."))
+        }
         layout.addView(button("Leave this place") { showMemory(memory.id) })
         setContentView(layout)
     }

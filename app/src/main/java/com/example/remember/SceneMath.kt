@@ -21,4 +21,33 @@ object SceneMath {
         val sinPitch = sin(pitch)
         return ProjectedPoint(x, point.y * cosPitch - z * sinPitch, point.y * sinPitch + z * cosPitch)
     }
+
+    /** World-to-camera rotation rows for a COLMAP quaternion. */
+    fun rotationRows(pose: CameraPose): Array<FloatArray> {
+        val w = pose.qw
+        val x = pose.qx
+        val y = pose.qy
+        val z = pose.qz
+        return arrayOf(
+            floatArrayOf(1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)),
+            floatArrayOf(2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)),
+            floatArrayOf(2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)),
+        )
+    }
+
+    /**
+     * Place a world point in the frame of a photograph that was actually taken,
+     * so the viewer looks out from where the photographer stood.
+     */
+    fun toCameraSpace(
+        x: Float,
+        y: Float,
+        z: Float,
+        rotation: Array<FloatArray>,
+        pose: CameraPose,
+    ): Triple<Float, Float, Float> = Triple(
+        rotation[0][0] * x + rotation[0][1] * y + rotation[0][2] * z + pose.tx,
+        rotation[1][0] * x + rotation[1][1] * y + rotation[1][2] * z + pose.ty,
+        rotation[2][0] * x + rotation[2][1] * y + rotation[2][2] * z + pose.tz,
+    )
 }

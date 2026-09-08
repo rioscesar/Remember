@@ -43,8 +43,27 @@ object ReconstructionBundle {
             points = points,
             registeredPhotoNames = registeredPhotoNames,
             rejectedPhotoNames = root.optJSONArray("rejectedPhotoNames")?.toStrings().orEmpty(),
+            cameraPoses = root.optJSONArray("cameraPoses")?.let { array ->
+                List(array.length()) { index ->
+                    array.getJSONObject(index).let {
+                        CameraPose(
+                            name = it.getString("name"),
+                            qw = it.getDouble("qw").toFloat(), qx = it.getDouble("qx").toFloat(),
+                            qy = it.getDouble("qy").toFloat(), qz = it.getDouble("qz").toFloat(),
+                            tx = it.getDouble("tx").toFloat(), ty = it.getDouble("ty").toFloat(),
+                            tz = it.getDouble("tz").toFloat(),
+                        )
+                    }
+                }
+            }.orEmpty().filter(::isFinitePose),
+            focalLengthNormalized = root.optDouble("focalLengthNormalized")
+                .takeIf { it.isFinite() && it > 0.0 }?.toFloat(),
         )
     }
+
+    private fun isFinitePose(pose: CameraPose): Boolean = listOf(
+        pose.qw, pose.qx, pose.qy, pose.qz, pose.tx, pose.ty, pose.tz,
+    ).all { it.isFinite() }
 
     private fun JSONArray.toStrings(): List<String> = List(length()) { getString(it) }
 }

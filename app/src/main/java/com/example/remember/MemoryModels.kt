@@ -18,6 +18,23 @@ data class Reconstruction(
     val points: List<EvidencePoint>,
     val registeredPhotoNames: List<String>,
     val rejectedPhotoNames: List<String>,
+    val cameraPoses: List<CameraPose> = emptyList(),
+    val focalLengthNormalized: Float? = null,
+)
+
+/**
+ * A position a photograph was actually taken from, recovered by the companion.
+ * Rotation is world-to-camera, matching COLMAP's convention.
+ */
+data class CameraPose(
+    val name: String,
+    val qw: Float,
+    val qx: Float,
+    val qy: Float,
+    val qz: Float,
+    val tx: Float,
+    val ty: Float,
+    val tz: Float,
 )
 
 data class EvidencePoint(
@@ -47,6 +64,17 @@ object MemoryJson {
                     put("reconstruction", JSONObject().apply {
                         put("registeredPhotoNames", JSONArray(reconstruction.registeredPhotoNames))
                         put("rejectedPhotoNames", JSONArray(reconstruction.rejectedPhotoNames))
+                        put("focalLengthNormalized", reconstruction.focalLengthNormalized ?: JSONObject.NULL)
+                        put("cameraPoses", JSONArray().apply {
+                            reconstruction.cameraPoses.forEach { pose ->
+                                put(JSONObject().apply {
+                                    put("name", pose.name)
+                                    put("qw", pose.qw); put("qx", pose.qx)
+                                    put("qy", pose.qy); put("qz", pose.qz)
+                                    put("tx", pose.tx); put("ty", pose.ty); put("tz", pose.tz)
+                                })
+                            }
+                        })
                         put("points", JSONArray().apply {
                             reconstruction.points.forEach { point ->
                                 put(JSONObject().apply {
@@ -98,8 +126,19 @@ object MemoryJson {
             },
             registeredPhotoNames = getJSONArray("registeredPhotoNames").toStrings(),
             rejectedPhotoNames = getJSONArray("rejectedPhotoNames").toStrings(),
+            cameraPoses = optJSONArray("cameraPoses")?.let { array ->
+                List(array.length()) { index -> array.getJSONObject(index).toCameraPose() }
+            }.orEmpty(),
+            focalLengthNormalized = if (isNull("focalLengthNormalized")) null else getDouble("focalLengthNormalized").toFloat(),
         )
     }
+
+    private fun JSONObject.toCameraPose(): CameraPose = CameraPose(
+        name = getString("name"),
+        qw = getDouble("qw").toFloat(), qx = getDouble("qx").toFloat(),
+        qy = getDouble("qy").toFloat(), qz = getDouble("qz").toFloat(),
+        tx = getDouble("tx").toFloat(), ty = getDouble("ty").toFloat(), tz = getDouble("tz").toFloat(),
+    )
 
     private fun JSONArray.toStrings(): List<String> = List(length()) { getString(it) }
 }
