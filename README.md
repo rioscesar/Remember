@@ -18,6 +18,7 @@ The project uses Kotlin and AndroidX. It targets Android 15 (API 35) and support
 - [Semantic planar reconstruction spike](docs/SEMANTIC-PLANE-SPIKE.md)
 - [Photographic coherence spike](docs/WALL-COHERENCE-SPIKE.md)
 - [Radiance-field representation spike](docs/RECONSTRUCTION-REPRESENTATION-SPIKE.md)
+- [Sparse-view regularization and support-gate spike](docs/SPARSE-VIEW-SUPPORT-GATE-SPIKE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Privacy](docs/PRIVACY.md)
 - [Milestone 0 results](docs/MILESTONE-0-RESULTS.md)
