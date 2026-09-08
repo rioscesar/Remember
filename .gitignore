@@ -20,3 +20,6 @@ local.properties
 # OS files
 .DS_Store
 Thumbs.db
+
+# Remember Companion local workspaces
+.remember-work/

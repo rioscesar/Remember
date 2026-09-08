@@ -1,6 +1,6 @@
 # Remember
 
-Remember is an Android application for capturing and revisiting the things that matter.
+Remember helps people spatially revisit places held in their existing photographs. It reconstructs only what the photographs can support.
 
 ## Getting started
 
@@ -8,13 +8,16 @@ Remember is an Android application for capturing and revisiting the things that 
 2. Allow Gradle to finish syncing the project.
 3. Select an emulator or connected Android device and run the `app` configuration.
 
-The project uses Kotlin, AndroidX, and Material Components. It targets Android 15 (API 35) and supports Android 7.0 (API 24) and later.
+The project uses Kotlin and AndroidX. It targets Android 15 (API 35) and supports Android 7.0 (API 24) and later. The private local Companion currently performs sparse reconstruction; the Android app imports and explores its evidence-backed result.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [Development guide](docs/development.md)
-- [Product notes](docs/product.md)
+- [Product principles](docs/PRODUCT-PRINCIPLES.md)
+- [Reconstruction feasibility spike](docs/RECONSTRUCTION-SPIKE.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Privacy](docs/PRIVACY.md)
+- [Milestone 0 results](docs/MILESTONE-0-RESULTS.md)
+- [Development guide](docs/DEVELOPMENT.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## Licensing
