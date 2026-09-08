@@ -6,9 +6,9 @@ Remember separates private reconstruction from private viewing.
 
 | Component | Responsibility | Media boundary |
 |---|---|---|
-| Android app | Memory library, source URI references, bundle validation, and evidence-point rendering | Reads selected media through Android's document provider; has no `INTERNET` permission. |
-| Remember Companion | Local COLMAP Structure-from-Motion and evidence-only dense export | Runs on the person's computer; input and temporary output stay local. |
-| Reconstruction bundle | Versioned JSON carrying points, quality values, and source-photo names | Imported manually from local storage; contains no generated scene completion. |
+| Android app | Memory library, source URI references, bundle validation, and evidence-backed viewing | Reads selected media through Android's document provider; has no `INTERNET` permission. |
+| Remember Companion | Local COLMAP Structure-from-Motion and representation evidence export | Runs on the person's computer; input and temporary output stay local. |
+| Reconstruction bundle | Versioned data carrying camera poses, quality values, geometry, and source-photo names | Imported manually from local storage; contains no generated scene completion. |
 
 ## Android data flow
 
@@ -19,6 +19,21 @@ Remember separates private reconstruction from private viewing.
 5. The scene view projects the imported three-dimensional landmarks in response to touch rotation. Point opacity decreases with observed support and reprojection quality.
 
 No distance is displayed: ordinary-photo SfM has arbitrary scale unless separate measured evidence is introduced.
+
+## Representation direction
+
+The physical-device dense spike established that valid coloured points do not make an ordinary interior recognizable when reliable depth covers only a small fraction of its surfaces. Camera poses and correspondences remain useful, but the primary appearance representation is moving toward original photographs arranged as spatial anchors:
+
+`photos -> camera/geometry evidence -> spatial photograph navigation`
+
+The provenance classes are:
+
+- **Captured:** direct source pixels;
+- **Reconstructed:** geometry supported by multiple observations;
+- **Interpolated:** captured pixels geometrically reprojected between known viewpoints;
+- **Imagined:** content without sufficient photographic evidence.
+
+Captured, reconstructed, and quality-gated interpolated evidence are allowed. Imagined content is not part of the evidence-backed experience. See [the representation spike](REPRESENTATION-SPIKE.md) for the measured alternatives and current stop/go decision.
 
 ## Evidence contract
 
