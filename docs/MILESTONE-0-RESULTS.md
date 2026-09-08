@@ -45,6 +45,16 @@ COLMAP core is BSD-licensed, but its license explicitly excludes its dependencie
 - **Memory:** Does exploring it trigger recognition or recollection that simply viewing the source photos does not?
 - **Experience:** Does it feel like the beginning of entering a memory, or merely like viewing a point cloud?
 
+### Physical-device result — not acceptable (2026-09-07)
+
+On a Samsung Fold 6, the imported sparse scene appeared as a small, fragmented cluster on an otherwise empty dark canvas. It was not recognizable as the apartment and did not support meaningful orientation or exploration. This is a **product-validation failure**, not a successful experience merely because the bundle passed the import contract.
+
+The geometry diagnosis agrees with the on-device result. The retained JPEG-derived cloud is concentrated in a narrow region: its central 90% spans approximately 0.01 reconstruction units on X, 0.01 on Y, and 0.04 on Z. A single Z outlier expands the full Z range to approximately 0.22 units. This is an insufficiently broad and spatially degenerate recovered cluster, rather than a representation of the apartment.
+
+The viewer must not compensate by enlarging points into surfaces, inventing missing geometry, adding a panorama, or synthesizing texture. Reframing alone cannot turn this narrow cluster into an explorable memory.
+
+**Smallest next engineering experiment:** preserve the same local COLMAP sparse pipeline and evidence contract, but add a companion-only reconstruction inspection report that measures component extent, camera baseline, and landmark distribution before export. Reject or label an import as insufficient when a component is too spatially degenerate to explore, then test a deliberately overlapping subset captured across one continuous apartment area. If that still produces only a narrow cluster, the next separate spike is evidence-validated dense multi-view stereo—not generated completion.
+
 ## Not yet demonstrated
 
 This repository does not include sensitive sample imagery or a bundled COLMAP binary, so a physical-device end-to-end run and latency benchmark remain required before declaring Milestone 0 complete. AR portal work is intentionally deferred.
