@@ -174,10 +174,20 @@ def main() -> int:
             args.colmap, "feature_extractor", "--database_path", str(database), "--image_path", str(images),
             "--image_list_path", str(image_list),
             "--FeatureExtraction.type", "SIFT", "--FeatureExtraction.use_gpu", "0",
-            "--FeatureExtraction.max_image_size", "1600", "--FeatureExtraction.num_threads", "4",
-            "--SiftExtraction.max_num_features", "4096",
+            "--FeatureExtraction.max_image_size", "3200", "--FeatureExtraction.num_threads", "4",
+            "--SiftExtraction.max_num_features", "16384",
+            # Photos from one phone share intrinsics; solving them per image is the
+            # dominant cause of failed registration on small indoor sets.
+            "--ImageReader.single_camera", "1",
+            # Affine shape and domain-size pooling markedly improve matching across
+            # the wide viewpoint changes of a walkthrough capture.
+            "--SiftExtraction.estimate_affine_shape", "1",
+            "--SiftExtraction.domain_size_pooling", "1",
         ])
-        run([args.colmap, "exhaustive_matcher", "--database_path", str(database), "--FeatureMatching.use_gpu", "0"])
+        run([
+            args.colmap, "exhaustive_matcher", "--database_path", str(database),
+            "--FeatureMatching.use_gpu", "0", "--FeatureMatching.guided_matching", "1",
+        ])
         run([
             args.colmap, "mapper", "--database_path", str(database), "--image_path", str(images),
             "--output_path", str(sparse), "--Mapper.min_model_size", str(MIN_REGISTERED_IMAGES),

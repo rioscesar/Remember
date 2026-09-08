@@ -109,17 +109,38 @@ The first device assessment reported the scene as not recognizable. That assessm
 
 After the correction, the dense scene resolves framed artwork on a wall clearly enough that the individual pieces are identifiable and printed text on them is legible. Dense multi-view stereo therefore does produce genuinely recognizable content from these photographs, which sparse reconstruction never did.
 
-### Remaining failure: the capture covers one plane, not a place
+### Remaining failure: reconstruction configuration, not capture
 
-With the orientation corrected, the scene is still **not recognizable as the apartment**. The cause is measurable rather than aesthetic. A principal-component analysis of the 26,974 accepted points gives per-axis standard deviations of 4.049, 0.323, and 0.026 reconstruction units; the thinnest principal axis is **1.7%** of the widest.
+With the orientation corrected, the scene was still not recognizable, and the first diagnosis of that failure was **wrong**. A principal-component analysis of the 26,974 accepted points gave per-axis standard deviations of 4.049, 0.323, and 0.026 reconstruction units — a thinnest axis only 1.7% of the widest, so the output was a near-perfect plane. That measurement was correct. The conclusion drawn from it, that the photographs only covered one wall, was not.
 
-The accepted geometry is a near-perfect single plane: one gallery wall. The reconstruction is faithful to its input, and the input only covers that wall. No density, rendering change, or filtering adjustment can recover a room that was never photographed from positions that see it.
+Direct inspection of the 13 source photographs shows a genuine walkthrough: a kitchen from two angles, a laundry alcove, a dining area with the front door, a living room from four separate positions and directions, a hallway, a pantry, and an open entry door. Capture coverage was never the limitation. The recorded request for a new "orbiting" capture was unnecessary and has been withdrawn.
 
-The Companion now measures this directly and refuses to export a single-surface scene, requiring the thinnest principal spread to be at least 5% of the widest. Re-running this bundle through the gate now fails with a 1.7% spread, so the gate predicts the perceptual outcome in advance rather than after a device round trip.
+The real causes were defects in the Companion's own COLMAP configuration, confirmed against the feature database:
 
-No meshing, hole filling, depth completion, AR, or generative technique was added to compensate. Higher point count alone is not sufficient evidence that a place can be recognized.
+- **Per-image intrinsics.** All 13 photographs come from one phone, but the extractor ran with COLMAP's default `--ImageReader.single_camera 0`, creating 13 independent cameras that each had to solve for their own focal length and distortion. This is the dominant fault.
+- **Aggressive downscaling.** Sources are 4000x3000; extraction ran at `max_image_size 1600`, discarding roughly 84% of the pixels.
+- **Default wide-baseline matching.** Feature counts were healthy at 2,103–7,192 per image and the image with the *most* features failed to register, so texture was never the constraint. Only 33 of 78 possible pairs achieved verified two-view geometry, at a median of 77 inliers.
 
-**Conclusion:** the dense pipeline is validated and worth keeping; the blocking limitation is capture coverage. The next experiment needs photographs that orbit an area and observe it from multiple directions, not a set aimed repeatedly at one wall.
+### Corrected configuration
+
+| Configuration | Registered | Sparse points |
+|---|---:|---:|
+| Original: 1600 px, per-image cameras | 8 of 13 | 468 |
+| Shared intrinsics, 3200 px | 9 of 13 | 1,055 |
+| Plus affine shape, domain-size pooling, guided matching | 11 of 13 | 2,631 |
+
+Re-running dense reconstruction from the corrected poses fused 32,802 candidates across all 11 registered views and retained 30,255 under the unchanged three-distinct-view rule. The geometry is no longer planar:
+
+| Measurement | Original | Corrected |
+|---|---:|---:|
+| Principal spreads | 4.049 / 0.323 / 0.026 | 2.209 / 0.536 / 0.444 |
+| Thinnest-to-widest spread | 1.7% | 20.1% |
+| Robust spans | 4.049 / 1.035 / 0.698 | 3.874 / 2.905 / 6.518 |
+| Accepted points | 26,974 | 30,255 |
+
+The single-surface gate (thinnest principal spread at least 5% of widest) rejects the original output and passes the corrected one, so it separates the two cases correctly. No meshing, hole filling, depth completion, AR, or generative technique was used; the improvement comes entirely from configuring the reconstruction correctly.
+
+**Lesson recorded:** a degenerate output was attributed to the person's photographs before the photographs were examined. Objective output metrics identified *that* the scene was degenerate but not *why*, and the input-side conclusion drawn from them was false. Inspect inputs and pipeline configuration before attributing a reconstruction failure to capture.
 
 ## Not yet demonstrated
 

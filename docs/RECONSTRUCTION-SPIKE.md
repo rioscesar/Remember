@@ -17,6 +17,16 @@
 
 The companion uses COLMAP's CPU feature extraction, exhaustive matching, incremental mapper, and text conversion. It retains only landmarks observed by at least three images, with non-negative reprojection error. It requires at least three registered photos and 100 retained landmarks. These are initial product thresholds, not claims of scientific certainty.
 
+### Extraction and matching settings
+
+These settings are load-bearing, not incidental. An early configuration registered only 8 of 13 photographs from a valid apartment walkthrough and produced a planar reconstruction; correcting them registered 11 and produced volumetric geometry.
+
+- `--ImageReader.single_camera 1`. A personal photo set is normally one phone camera. COLMAP defaults to per-image intrinsics, forcing every photograph to solve independently for focal length and distortion. This was the dominant cause of failed registration.
+- `--FeatureExtraction.max_image_size 3200`. Phone captures are commonly 4000x3000; extracting at 1600 discards roughly 84% of the pixels.
+- `--SiftExtraction.estimate_affine_shape 1` and `--SiftExtraction.domain_size_pooling 1`, with `--FeatureMatching.guided_matching 1`. Walkthrough photographs differ by large rotations and translations, and these options materially improve matching across that baseline. They are CPU-only in COLMAP and cost extraction time.
+
+A low registration count should therefore be investigated as a configuration or matching problem before it is attributed to the photographs. Feature counts per image and the number of pairs with verified two-view geometry distinguish the two: abundant features with few verified pairs indicates matching, not texture.
+
 `tools/reconstruct_memory.py` is the local exporter. It invokes only a local `colmap` executable, passes it an explicit list of supported image files directly in the selected folder (never nested folders), creates a temporary workspace beside the selected output, deletes that workspace after success, retains it after failure for local diagnostics, and writes `reconstruction.json` only after all thresholds pass.
 
 Before export, the Companion additionally measures the recovered camera-center baselines and the robust (5th-to-95th percentile) landmark span. It rejects a result when fewer than half the selected photographs join its accepted component, camera centers have no measurable baseline, or the landmark diagonal is less than half the median camera baseline. These scale-relative checks prevent a small or collapsed fragment from being presented as an explorable place.
@@ -33,7 +43,7 @@ The dense experiment uses a separate, local COLMAP 4.2.0 CUDA pipeline only afte
 
 The fusion output is a candidate point cloud, not automatically accepted scene evidence. `tools/export_dense_evidence.py` reads the binary PLY and COLMAP visibility sidecar with bounded record reads, verifies that the sidecar is fully consumed, and retains a point only when at least three distinct MVS source views support it. It rejects truncated or malformed records, non-finite coordinates, too few registered cameras, insufficient retained points, absent camera baseline, geometry whose robust spread is too concentrated relative to that baseline, and geometry that forms a single flat surface rather than an explorable place. Dense points preserve COLMAP's original coordinates and observed RGB values; they carry no synthetic reprojection error.
 
-The single-surface check is a principal-component analysis of the accepted points. When the thinnest principal standard deviation is under 5% of the widest, the recovered geometry is a plane — typically one wall photographed repeatedly — and cannot convey a room regardless of point count. This measures capture coverage, which density cannot substitute for.
+The single-surface check is a principal-component analysis of the accepted points. When the thinnest principal standard deviation is under 5% of the widest, the recovered geometry is a plane and cannot convey a room regardless of point count. This measures the *output*, so it detects a degenerate result without attributing a cause: a plane can come from limited capture coverage or from misconfigured extraction and matching, and the latter must be excluded first.
 
 The CUDA executable remains a local validation dependency and is neither checked into nor redistributed by Remember. As with the CPU companion, production distribution requires a complete audit of COLMAP's transitive binaries and licenses.
 
