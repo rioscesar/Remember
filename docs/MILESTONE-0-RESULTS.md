@@ -163,6 +163,8 @@ The conclusion is that this scene is limited by depth-map coverage, not by confi
 
 A controlled 3200-pixel rerun tested those remaining levers. Fractional geometric depth coverage remained 2.6%, but the higher source resolution increased fused candidates from 64,843 to 112,266 and accepted evidence points from 50,870 to 96,267. The exporter removed 601 spatially isolated points and rejected zero for weak triangulation. This does not recover blank painted surfaces, but it samples the genuinely supported edges and objects almost twice as densely. The Android renderer was changed from per-point circles to a depth-buffered software rasterizer so this larger cloud remains practical and nearer evidence occludes points behind it.
 
+**Physical-device verdict: failed.** On the Fold 6, the higher-density output was no more recognizable as the apartment. The depth-buffered square splats also made the artwork visibly blurrier, so that renderer change was reverted. Across the controlled variants, dense MVS either leaves most of the room absent or adds evidence points without improving recognition. The spike therefore did **not** demonstrate a material perceptual improvement over the sparse renderer and must not be described as successful.
+
 ## Not yet demonstrated
 
 This repository does not include sensitive sample imagery or a bundled COLMAP binary, so a physical-device end-to-end run and latency benchmark remain required before declaring Milestone 0 complete. AR portal work is intentionally deferred.
