@@ -16,8 +16,10 @@ The project uses Kotlin, AndroidX, and Material Components. It targets Android 1
 - [Development guide](docs/development.md)
 - [Product notes](docs/product.md)
 - [Contributing](CONTRIBUTING.md)
-- [License](LICENSE)
 
-## License
+## Licensing
 
-This project is licensed under the [MIT License](LICENSE).
+Copyright (c) 2026 Remember contributors. All rights reserved.
+
+This repository is public for development visibility. No license is granted to
+use, copy, modify, or distribute its contents.
