@@ -24,7 +24,7 @@ No distance is displayed: ordinary-photo SfM has arbitrary scale unless separate
 
 The physical-device dense spike established that valid coloured points do not make an ordinary interior recognizable when reliable depth covers only a small fraction of its surfaces. Camera poses and correspondences remain useful. A spatial photograph graph is retained as a navigation and fallback primitive, but it has not been accepted as the primary product representation.
 
-The next authorized experiment tests whether semantic classification can identify source pixels belonging to a recovered structural plane, allowing captured wall appearance to be projected without requiring per-pixel reconstructed depth.
+Semantic classification can identify enough source pixels belonging to one recovered structural wall to create a mostly covered photographic plane without requiring per-pixel reconstructed depth. The follow-on coherence spike fixed source ownership in canonical wall coordinates and preserved every contributor, eliminating ownership flicker during a small camera sweep. Photometric normalization reduced overlap disagreement, but exposure regions, semantic holes, and fragmented boundaries remained perceptually obvious. The wall therefore did not pass the continuous-photograph criterion and has not been promoted into the Android representation.
 
 The provenance classes are:
 
@@ -33,7 +33,7 @@ The provenance classes are:
 - **Interpolated:** captured pixels geometrically reprojected between known viewpoints;
 - **Imagined:** content without sufficient photographic evidence.
 
-Captured, reconstructed, and quality-gated interpolated evidence are allowed. Imagined content is not part of the evidence-backed experience. See [the representation spike](REPRESENTATION-SPIKE.md) for the measured alternatives and current stop/go decision.
+Captured, reconstructed, and quality-gated interpolated evidence are allowed. Imagined content is not part of the evidence-backed experience. See [the representation spike](REPRESENTATION-SPIKE.md), [semantic-plane spike](SEMANTIC-PLANE-SPIKE.md), and [photographic-coherence spike](WALL-COHERENCE-SPIKE.md) for the measured alternatives and stop/go decisions.
 
 ## Evidence contract
 
