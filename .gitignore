@@ -23,3 +23,6 @@ Thumbs.db
 
 # Remember Companion local workspaces
 .remember-work/
+
+# Python bytecode
+__pycache__/
