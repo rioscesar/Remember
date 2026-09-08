@@ -81,7 +81,7 @@ This result distinguishes the prior failure from a general pipeline failure: the
 
 The Android document picker is now explicitly launched with `image/heic` and `image/heif` alongside `image/*`, so the matching original files can be selected on devices whose providers do not include HEIC under the wildcard alone.
 
-## Dense multi-view evidence spike — awaiting physical-device assessment
+## Dense multi-view evidence spike — physical-device result: not acceptable
 
 Using only the Clean run's recovered component, a local COLMAP CUDA 4.2.0 dense pipeline completed PatchMatch geometric consistency in 3.607 minutes and conservative stereo fusion in 0.068 minutes. The experiment did not create a mesh, fill holes, predict depth, generate textures, or synthesize unseen space.
 
@@ -101,7 +101,9 @@ Using only the Clean run's recovered component, a local COLMAP CUDA 4.2.0 dense 
 
 The dense exporter bounded every PLY and visibility record, confirmed exactly 28,297 visibility records with no trailing data, rejected the 1,323 two-view candidates, and wrote a private 2.87 MB import bundle outside the repository. The earlier stalled export was caused by accepting only Unix line endings in a Windows-line-ending PLY header; the replacement parser rejects EOF before `end_header`, checks declared record sizes, and cannot silently continue past malformed sidecar data.
 
-This is an objective geometry pass only. It does **not** establish that the apartment is recognizable, navigable, or a successful Remember experience. The Fold comparison is pending while the device is disconnected. Dense output must be compared to the current sparse view on the same device before this experiment can be judged successful.
+This objective geometry pass did **not** establish that the apartment is recognizable, navigable, or a successful Remember experience. On the Fold 6, after importing the matching Clean sources and this filtered bundle, the dense point view was **not recognizable as the apartment** relative to the sparse view. The dense experiment therefore failed the required perceptual acceptance criterion.
+
+No additional rendering, meshing, hole filling, depth completion, AR, or generative technique was added to compensate. Higher point count alone is not sufficient evidence that the place can be recognized; this representation is not viable for Remember's intended experience with this capture.
 
 ## Not yet demonstrated
 
