@@ -276,9 +276,15 @@ def main() -> int:
         pose["name"]: (pose["cx"], pose["cy"], pose["cz"]) for pose in camera_poses
     }
     mvs_centers = [centers_by_name.get(name) for name in mvs_names]
+    if mvs_names and (
+        len(mvs_names) != len(registered_names) or any(center is None for center in mvs_centers)
+    ):
+        raise RuntimeError("MVS image order does not match the registered camera poses.")
+    multi_view_points = 0
     for vertex, views in zip(vertices, visibility):
         if len(views) < MIN_VIEWS:
             continue
+        multi_view_points += 1
         x, y, z, red, green, blue = vertex
         if mvs_centers:
             supporting = [
@@ -295,7 +301,6 @@ def main() -> int:
         })
     if len(accepted) < MIN_POINTS:
         raise RuntimeError("Too little multi-view-supported dense geometry was recovered.")
-    multi_view_points = len(accepted)
     spans = [
         percentile([point[axis] for point in accepted], 0.95) - percentile([point[axis] for point in accepted], 0.05)
         for axis in ("x", "y", "z")

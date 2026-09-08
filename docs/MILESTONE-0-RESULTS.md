@@ -161,6 +161,8 @@ No point is weakly triangulated, so the streaks are not reconstruction noise. Th
 
 The conclusion is that this scene is limited by depth-map coverage, not by confidence, and that the remaining honest levers are input resolution and PatchMatch propagation rather than further filtering. A triangulation-angle gate was nevertheless retained in the exporter as a guard for future scenes with weaker baselines; it rejects nothing here, which is itself the finding.
 
+A controlled 3200-pixel rerun tested those remaining levers. Fractional geometric depth coverage remained 2.6%, but the higher source resolution increased fused candidates from 64,843 to 112,266 and accepted evidence points from 50,870 to 96,267. The exporter removed 601 spatially isolated points and rejected zero for weak triangulation. This does not recover blank painted surfaces, but it samples the genuinely supported edges and objects almost twice as densely. The Android renderer was changed from per-point circles to a depth-buffered software rasterizer so this larger cloud remains practical and nearer evidence occludes points behind it.
+
 ## Not yet demonstrated
 
 This repository does not include sensitive sample imagery or a bundled COLMAP binary, so a physical-device end-to-end run and latency benchmark remain required before declaring Milestone 0 complete. AR portal work is intentionally deferred.
