@@ -17,7 +17,7 @@
 
 The companion uses COLMAP's CPU feature extraction, exhaustive matching, incremental mapper, and text conversion. It retains only landmarks observed by at least three images, with non-negative reprojection error. It requires at least three registered photos and 100 retained landmarks. These are initial product thresholds, not claims of scientific certainty.
 
-`tools/reconstruct_memory.py` is the local exporter. It invokes only a local `colmap` executable, creates a temporary workspace beside the selected output, deletes that workspace afterward, and writes `reconstruction.json` only after all thresholds pass.
+`tools/reconstruct_memory.py` is the local exporter. It invokes only a local `colmap` executable, passes it an explicit list of supported image files directly in the selected folder (never nested folders), creates a temporary workspace beside the selected output, deletes that workspace after success, retains it after failure for local diagnostics, and writes `reconstruction.json` only after all thresholds pass.
 
 Expected CPU time is seconds to several minutes for 8–20 images resized to 1600 pixels, depending on texture, overlap, and hardware. It requires RAM appropriate to feature matching; a discrete GPU is not required for the selected sparse pipeline. It emits no metric distance because SfM translation is scale-ambiguous.
 

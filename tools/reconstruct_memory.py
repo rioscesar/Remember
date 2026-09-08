@@ -31,7 +31,8 @@ def parse_images(path: Path) -> tuple[set[int], set[str]]:
     return ids, names
 
 
-def parse_points(path: Path) -> list[dict]:
+def parse_points(path: Path) -> tuple[int, list[dict]]:
+    total = 0
     points: list[dict] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line or line.startswith("#"):
@@ -39,6 +40,7 @@ def parse_points(path: Path) -> list[dict]:
         fields = line.split()
         if len(fields) < 8:
             continue
+        total += 1
         observations = fields[8:]
         image_ids = {int(observations[index]) for index in range(0, len(observations), 2)}
         error = float(fields[7])
@@ -56,7 +58,7 @@ def parse_points(path: Path) -> list[dict]:
                 "reprojectionError": error,
             }
         )
-    return points
+    return total, points
 
 
 def largest_model(sparse_dir: Path) -> Path:
@@ -73,13 +75,16 @@ def main() -> int:
     parser.add_argument("--images", type=Path, required=True, help="Directory containing one place's photos")
     parser.add_argument("--output", type=Path, required=True, help="Destination reconstruction.json")
     parser.add_argument("--colmap", default="colmap", help="Path to a locally installed COLMAP executable")
-    parser.add_argument("--work", type=Path, help="Local temporary work directory (deleted after success)")
+    parser.add_argument("--work", type=Path, help="Local temporary work directory (deleted after success; retained on failure)")
     args = parser.parse_args()
 
     images = args.images.resolve()
     if not images.is_dir():
         raise RuntimeError(f"Image directory does not exist: {images}")
-    source_images = sorted(path.name for path in images.iterdir() if path.is_file())
+    source_images = sorted(
+        path.name for path in images.iterdir()
+        if path.is_file() and path.suffix.lower() in {".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+    )
     if len(source_images) < MIN_REGISTERED_IMAGES:
         raise RuntimeError("Choose at least three photos of one place.")
 
@@ -89,12 +94,16 @@ def main() -> int:
     database = work / "database.db"
     sparse = work / "sparse"
     text = work / "sparse-text"
+    image_list = work / "source-images.txt"
     work.mkdir(parents=True)
+    succeeded = False
     try:
         sparse.mkdir()
         text.mkdir()
+        image_list.write_text("\n".join(source_images) + "\n", encoding="utf-8")
         run([
             args.colmap, "feature_extractor", "--database_path", str(database), "--image_path", str(images),
+            "--image_list_path", str(image_list),
             "--FeatureExtraction.type", "SIFT", "--FeatureExtraction.use_gpu", "0",
             "--FeatureExtraction.max_image_size", "1600", "--FeatureExtraction.num_threads", "4",
             "--SiftExtraction.max_num_features", "4096",
@@ -111,7 +120,7 @@ def main() -> int:
             "--output_type", "TXT",
         ])
         registered_ids, registered_names = parse_images(text / "images.txt")
-        points = parse_points(text / "points3D.txt")
+        total_points, points = parse_points(text / "points3D.txt")
         if len(registered_ids) < MIN_REGISTERED_IMAGES:
             raise RuntimeError("Not enough photographs could be registered together. Try photos with more overlap.")
         if len(points) < MIN_POINTS:
@@ -121,15 +130,22 @@ def main() -> int:
             "sourceImages": source_images,
             "registeredPhotoNames": sorted(registered_names),
             "rejectedPhotoNames": sorted(set(source_images) - registered_names),
+            "diagnostics": {
+                "triangulatedLandmarks": total_points,
+                "retainedLandmarks": len(points),
+            },
             "points": points,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        print(f"Wrote {len(points)} evidence-backed landmarks to {args.output}")
+        print(f"Wrote {len(points)} of {total_points} triangulated landmarks with sufficient evidence to {args.output}")
+        succeeded = True
         return 0
     finally:
-        if work.exists():
+        if succeeded and work.exists():
             shutil.rmtree(work)
+        elif work.exists():
+            print(f"Retained diagnostic workspace: {work}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ No distance is displayed: ordinary-photo SfM has arbitrary scale unless separate
 
 ## Evidence contract
 
-An accepted landmark has coordinates, observed RGB color, at least three supporting photographs, and a non-negative reprojection error. The app rejects bundles with fewer than 100 such landmarks. It renders no surfaces, inferred depths, or generated regions. The background and attenuated points form the evidence boundary rather than a fabricated room.
+An accepted landmark has coordinates, observed RGB color, at least three supporting photographs, and a non-negative reprojection error. Bundles also carry aggregate pre- and post-filter landmark counts. The app rejects bundles with fewer than 100 accepted landmarks. It renders no surfaces, inferred depths, or generated regions. The background and attenuated points form the evidence boundary rather than a fabricated room.
 
 ## Future boundaries
 
