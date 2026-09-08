@@ -37,7 +37,9 @@ class EvidenceSceneView(context: Context, private val points: List<EvidencePoint
             .sortedBy { (_, projected) -> projected.depth }
             .forEach { (point, projected) ->
                 val supportAlpha = ((point.support - 2) * 48).coerceIn(48, 190)
-                val qualityAlpha = (190 - point.reprojectionError * 35).toInt().coerceIn(60, 190)
+                val qualityAlpha = point.reprojectionError
+                    ?.let { (190 - it * 35).toInt().coerceIn(60, 190) }
+                    ?: 190
                 paint.color = Color.rgb(point.red, point.green, point.blue)
                 paint.alpha = min(supportAlpha, qualityAlpha)
                 val perspective = 4.5f / (4.5f + projected.depth)

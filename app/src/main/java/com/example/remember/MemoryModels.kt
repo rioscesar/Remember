@@ -28,7 +28,7 @@ data class EvidencePoint(
     val green: Int,
     val blue: Int,
     val support: Int,
-    val reprojectionError: Float,
+    val reprojectionError: Float? = null,
 )
 
 object MemoryJson {
@@ -53,7 +53,7 @@ object MemoryJson {
                                     put("x", point.x); put("y", point.y); put("z", point.z)
                                     put("r", point.red); put("g", point.green); put("b", point.blue)
                                     put("support", point.support)
-                                    put("reprojectionError", point.reprojectionError)
+                                    put("reprojectionError", point.reprojectionError ?: JSONObject.NULL)
                                 })
                             }
                         })
@@ -92,7 +92,7 @@ object MemoryJson {
                         x = it.getDouble("x").toFloat(), y = it.getDouble("y").toFloat(),
                         z = it.getDouble("z").toFloat(), red = it.getInt("r"),
                         green = it.getInt("g"), blue = it.getInt("b"), support = it.getInt("support"),
-                        reprojectionError = it.getDouble("reprojectionError").toFloat(),
+                        reprojectionError = if (it.isNull("reprojectionError")) null else it.getDouble("reprojectionError").toFloat(),
                     )
                 }
             },

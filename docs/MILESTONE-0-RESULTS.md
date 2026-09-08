@@ -81,6 +81,28 @@ This result distinguishes the prior failure from a general pipeline failure: the
 
 The Android document picker is now explicitly launched with `image/heic` and `image/heif` alongside `image/*`, so the matching original files can be selected on devices whose providers do not include HEIC under the wildcard alone.
 
+## Dense multi-view evidence spike — awaiting physical-device assessment
+
+Using only the Clean run's recovered component, a local COLMAP CUDA 4.2.0 dense pipeline completed PatchMatch geometric consistency in 3.607 minutes and conservative stereo fusion in 0.068 minutes. The experiment did not create a mesh, fill holes, predict depth, generate textures, or synthesize unseen space.
+
+| Measurement | Sparse Clean component | Dense geometric fusion |
+|---|---:|---:|
+| Registered photographs | 8 | 8 |
+| Candidate points | 468 | 28,297 |
+| Accepted points | 468 | 26,974 |
+| Evidence rule | At least 3 observations | At least 3 distinct MVS source views |
+| Three-view points | N/A | 12,417 |
+| Four-view points | N/A | 7,376 |
+| Five-view points | N/A | 6,356 |
+| Six-view points | N/A | 825 |
+| Robust geometry diagonal | N/A | 4.237 reconstruction units |
+| Median camera baseline | N/A | 3.943 reconstruction units |
+| Diagonal-to-baseline ratio | N/A | 1.075 |
+
+The dense exporter bounded every PLY and visibility record, confirmed exactly 28,297 visibility records with no trailing data, rejected the 1,323 two-view candidates, and wrote a private 2.87 MB import bundle outside the repository. The earlier stalled export was caused by accepting only Unix line endings in a Windows-line-ending PLY header; the replacement parser rejects EOF before `end_header`, checks declared record sizes, and cannot silently continue past malformed sidecar data.
+
+This is an objective geometry pass only. It does **not** establish that the apartment is recognizable, navigable, or a successful Remember experience. The Fold comparison is pending while the device is disconnected. Dense output must be compared to the current sparse view on the same device before this experiment can be judged successful.
+
 ## Not yet demonstrated
 
 This repository does not include sensitive sample imagery or a bundled COLMAP binary, so a physical-device end-to-end run and latency benchmark remain required before declaring Milestone 0 complete. AR portal work is intentionally deferred.

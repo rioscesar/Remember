@@ -6,8 +6,8 @@ Remember separates private reconstruction from private viewing.
 
 | Component | Responsibility | Media boundary |
 |---|---|---|
-| Android app | Memory library, source URI references, bundle validation, and sparse-scene rendering | Reads selected media through Android's document provider; has no `INTERNET` permission. |
-| Remember Companion | Local CPU Structure-from-Motion with COLMAP and bundle export | Runs on the person's computer; input and temporary output stay local. |
+| Android app | Memory library, source URI references, bundle validation, and evidence-point rendering | Reads selected media through Android's document provider; has no `INTERNET` permission. |
+| Remember Companion | Local COLMAP Structure-from-Motion and evidence-only dense export | Runs on the person's computer; input and temporary output stay local. |
 | Reconstruction bundle | Versioned JSON carrying points, quality values, and source-photo names | Imported manually from local storage; contains no generated scene completion. |
 
 ## Android data flow
@@ -22,7 +22,7 @@ No distance is displayed: ordinary-photo SfM has arbitrary scale unless separate
 
 ## Evidence contract
 
-An accepted landmark has coordinates, observed RGB color, at least three supporting photographs, and a non-negative reprojection error. Bundles also carry aggregate pre- and post-filter landmark counts plus a quality-gate report calculated from recovered camera centers and retained landmarks.
+An accepted point has coordinates, observed RGB color, and at least three supporting photographs. Sparse points also carry a non-negative reprojection error; dense geometric-fusion points explicitly have no sparse residual. Bundles carry aggregate pre- and post-filter point counts plus a quality-gate report calculated from recovered camera centers and retained geometry.
 
 The Companion rejects a reconstruction before writing an importable bundle unless all of these objective conditions hold:
 
@@ -34,6 +34,6 @@ The Companion rejects a reconstruction before writing an importable bundle unles
 
 The Android importer independently requires `qualityGatePassed` from that report. It renders no surfaces, inferred depths, or generated regions. The background and attenuated points form the evidence boundary rather than a fabricated room.
 
-## Future boundaries
+## Dense evidence boundary
 
-On-device SfM, dense geometry, and AR are deliberately separate follow-on spikes. They cannot replace the provenance checks in the import contract.
+The dense spike consumes only a sparse component that has already passed the quality gate. COLMAP geometric fusion supplies candidate points, then the Companion requires at least three **distinct** source views per retained point, fully parses the visibility sidecar, preserves original fused coordinates and colors, and applies the same camera-baseline-to-robust-spread gate. It creates no mesh, filled surface, completion, inferred texture, or generated region. On-device SfM and AR remain deliberately separate follow-on spikes and cannot replace the provenance checks in the import contract.

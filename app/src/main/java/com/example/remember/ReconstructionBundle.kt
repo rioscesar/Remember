@@ -30,13 +30,13 @@ object ReconstructionBundle {
                         z = it.getDouble("z").toFloat(), red = it.getInt("r"),
                         green = it.getInt("g"), blue = it.getInt("b"),
                         support = it.getInt("support"),
-                        reprojectionError = it.getDouble("reprojectionError").toFloat(),
+                        reprojectionError = if (it.has("reprojectionError")) it.getDouble("reprojectionError").toFloat() else null,
                     )
                 }
             }
         }
         require(points.size >= 100) { "This place did not produce enough shared spatial evidence." }
-        require(points.all { it.support >= 3 && it.reprojectionError >= 0f }) {
+        require(points.all { it.support >= 3 && (it.reprojectionError == null || it.reprojectionError >= 0f) }) {
             "The reconstruction contains points without sufficient photographic support."
         }
         return Reconstruction(
