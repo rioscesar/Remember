@@ -16,6 +16,12 @@ object ReconstructionBundle {
         require(registeredPhotoNames.all(sourceImages::contains)) {
             "The reconstruction bundle has invalid source evidence."
         }
+        val diagnostics = root.getJSONObject("diagnostics")
+        require(diagnostics.getBoolean("qualityGatePassed")) {
+            "This reconstruction is too incomplete to explore: ${
+                diagnostics.getJSONArray("qualityGateFailures").toStrings().joinToString()
+            }."
+        }
         val points = root.getJSONArray("points").let { array ->
             List(array.length()) { index ->
                 array.getJSONObject(index).let {

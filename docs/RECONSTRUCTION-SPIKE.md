@@ -19,6 +19,8 @@ The companion uses COLMAP's CPU feature extraction, exhaustive matching, increme
 
 `tools/reconstruct_memory.py` is the local exporter. It invokes only a local `colmap` executable, passes it an explicit list of supported image files directly in the selected folder (never nested folders), creates a temporary workspace beside the selected output, deletes that workspace after success, retains it after failure for local diagnostics, and writes `reconstruction.json` only after all thresholds pass.
 
+Before export, the Companion additionally measures the recovered camera-center baselines and the robust (5th-to-95th percentile) landmark span. It rejects a result when fewer than half the selected photographs join its accepted component, camera centers have no measurable baseline, or the landmark diagonal is less than half the median camera baseline. These scale-relative checks prevent a small or collapsed fragment from being presented as an explorable place.
+
 Expected CPU time is seconds to several minutes for 8–20 images resized to 1600 pixels, depending on texture, overlap, and hardware. It requires RAM appropriate to feature matching; a discrete GPU is not required for the selected sparse pipeline. It emits no metric distance because SfM translation is scale-ambiguous.
 
 ## Bundle and rendering

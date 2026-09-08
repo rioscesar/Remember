@@ -22,7 +22,17 @@ No distance is displayed: ordinary-photo SfM has arbitrary scale unless separate
 
 ## Evidence contract
 
-An accepted landmark has coordinates, observed RGB color, at least three supporting photographs, and a non-negative reprojection error. Bundles also carry aggregate pre- and post-filter landmark counts. The app rejects bundles with fewer than 100 accepted landmarks. It renders no surfaces, inferred depths, or generated regions. The background and attenuated points form the evidence boundary rather than a fabricated room.
+An accepted landmark has coordinates, observed RGB color, at least three supporting photographs, and a non-negative reprojection error. Bundles also carry aggregate pre- and post-filter landmark counts plus a quality-gate report calculated from recovered camera centers and retained landmarks.
+
+The Companion rejects a reconstruction before writing an importable bundle unless all of these objective conditions hold:
+
+- At least three photographs are registered.
+- At least 100 landmarks survive the three-observation evidence threshold.
+- At least 50% of the selected photographs belong to the accepted recovered component.
+- The median pairwise recovered-camera baseline is at least 0.001 reconstruction units.
+- The 5th-to-95th-percentile landmark-cloud diagonal is at least half of the median camera baseline.
+
+The Android importer independently requires `qualityGatePassed` from that report. It renders no surfaces, inferred depths, or generated regions. The background and attenuated points form the evidence boundary rather than a fabricated room.
 
 ## Future boundaries
 

@@ -55,6 +55,24 @@ The viewer must not compensate by enlarging points into surfaces, inventing miss
 
 **Smallest next engineering experiment:** preserve the same local COLMAP sparse pipeline and evidence contract, but add a companion-only reconstruction inspection report that measures component extent, camera baseline, and landmark distribution before export. Reject or label an import as insufficient when a component is too spatially degenerate to explore, then test a deliberately overlapping subset captured across one continuous apartment area. If that still produces only a narrow cluster, the next separate spike is evidence-validated dense multi-view stereo—not generated completion.
 
+## Reconstruction quality gate and controlled-overlap diagnosis (2026-09-07)
+
+The Companion now calculates and emits pre-export quality diagnostics from recovered camera centers and retained landmarks. It will not create an importable bundle unless at least half the selected photos join the accepted component, the median camera baseline is at least 0.001 reconstruction units, and the robust landmark diagonal is at least half that baseline. Android independently rejects any bundle whose quality gate did not pass.
+
+### Full apartment set
+
+The 42-photo JPEG validation set was reprocessed with the new gate. Its largest stable component registered 5 photos (11.9%), triangulated 286 landmarks, and retained 260 landmarks under the unchanged three-observation rule. The median recovered-camera baseline was 3.238 units, while the robust landmark diagonal was 1.294 units (ratio 0.400). The Companion correctly rejected it for both inadequate selected-photo coverage and concentrated geometry; it wrote no importable bundle.
+
+### Controlled-overlap subset
+
+An eight-photo subset was formed only from the images that had previously appeared in the earlier mixed-set component. This is a controlled reprocessing subset, not a newly captured photo set. COLMAP extracted features from all eight and found one connected match graph, but every attempted initialization was rejected as a bad initial pair; it created no sparse model.
+
+This points primarily to an **input camera-geometry limitation**: the existing photographs do not provide a stable translated-view initial pair for the selected area. It also demonstrates expected SfM sensitivity to pair selection; the earlier mixed-set fragment must not be interpreted as a reliable reconstruction. The Android renderer is not the cause of this failure.
+
+### Next controlled capture
+
+To distinguish a capture limitation from a remaining SfM-pipeline limitation, make one new, continuous capture of a single apartment area: 12–20 still photos, walking a shallow arc with visible translation between shots, 60–80% overlap, and fixed exposure where possible. Include textured stationary features at multiple depths; avoid people, mirrors, blank walls, and large viewpoint jumps. This needs a new user capture because no supplied subset passes initial-pair geometry. Process that capture unchanged through the same local Companion and quality gate.
+
 ## Not yet demonstrated
 
 This repository does not include sensitive sample imagery or a bundled COLMAP binary, so a physical-device end-to-end run and latency benchmark remain required before declaring Milestone 0 complete. AR portal work is intentionally deferred.
