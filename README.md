@@ -15,6 +15,7 @@ The project uses Kotlin and AndroidX. It targets Android 15 (API 35) and support
 - [Product principles](docs/PRODUCT-PRINCIPLES.md)
 - [Reconstruction feasibility spike](docs/RECONSTRUCTION-SPIKE.md)
 - [Representation pivot spike](docs/REPRESENTATION-SPIKE.md)
+- [Semantic planar reconstruction spike](docs/SEMANTIC-PLANE-SPIKE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Privacy](docs/PRIVACY.md)
 - [Milestone 0 results](docs/MILESTONE-0-RESULTS.md)

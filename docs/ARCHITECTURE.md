@@ -22,9 +22,9 @@ No distance is displayed: ordinary-photo SfM has arbitrary scale unless separate
 
 ## Representation direction
 
-The physical-device dense spike established that valid coloured points do not make an ordinary interior recognizable when reliable depth covers only a small fraction of its surfaces. Camera poses and correspondences remain useful, but the primary appearance representation is moving toward original photographs arranged as spatial anchors:
+The physical-device dense spike established that valid coloured points do not make an ordinary interior recognizable when reliable depth covers only a small fraction of its surfaces. Camera poses and correspondences remain useful. A spatial photograph graph is retained as a navigation and fallback primitive, but it has not been accepted as the primary product representation.
 
-`photos -> camera/geometry evidence -> spatial photograph navigation`
+The next authorized experiment tests whether semantic classification can identify source pixels belonging to a recovered structural plane, allowing captured wall appearance to be projected without requiring per-pixel reconstructed depth.
 
 The provenance classes are:
 

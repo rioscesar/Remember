@@ -86,7 +86,7 @@ Navigation moves only between recovered photograph positions. Original pixels re
 
 For the Clean set this representation is immediately recognizable because it displays the apartment photographs themselves. It preserves walls, floors, furniture, and fine detail that neither points nor depth-assisted interpolation retained. It permits spatially meaningful discrete translation, but not continuous free-viewpoint movement.
 
-**Verdict: leading evidence-native representation. It must still be compared on the Fold against simply showing the photos in chronological order.**
+**Verdict: useful navigation and fallback primitive. It has not been accepted as the primary product representation.**
 
 ## Comparison
 
@@ -102,17 +102,17 @@ For the Clean set this representation is immediately recognizable because it dis
 
 Do not discard COLMAP. Its camera poses, correspondences, overlap graph, and depth estimates remain useful evidence. The supported direction is:
 
-`photos -> camera/geometry evidence -> spatial photograph navigation`
+`photos -> camera/geometry evidence -> evidence-provenanced photographic surfaces and navigation`
 
 Continuous interpolation may be layered between nearby anchors only where support metrics pass a future quality gate. It must not replace a captured photograph with a mostly unsupported virtual view.
 
 ## Stop/go result
 
-Stop work on higher point density and unrestricted free-viewpoint rendering for this dataset. Do not modify the Android renderer until the local spatial photograph graph has been evaluated against a plain photo sequence and the user agrees that spatially directed navigation improves the experience.
+Stop work on higher point density and unrestricted free-viewpoint rendering for this dataset. Do not modify the Android renderer yet. The next authorized experiment is semantic planar photographic reconstruction of the strongest recovered wall, with the spatial photograph graph preserved as a fallback rather than treated as the product conclusion.
 
-The next product question is narrower:
+The next experiment asks:
 
-> Does navigating the original photographs according to recovered place geometry feel more like returning to the apartment than browsing those photographs normally?
+> Can source pixels classified as belonging to the recovered wall create a continuous photographic structural surface without requiring dense depth at every displayed pixel?
 
 ## Research references and licenses
 
