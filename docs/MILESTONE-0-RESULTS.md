@@ -73,6 +73,14 @@ This points primarily to an **input camera-geometry limitation**: the existing p
 
 To distinguish a capture limitation from a remaining SfM-pipeline limitation, make one new, continuous capture of a single apartment area: 12–20 still photos, walking a shallow arc with visible translation between shots, 60–80% overlap, and fixed exposure where possible. Include textured stationary features at multiple depths; avoid people, mirrors, blank walls, and large viewpoint jumps. This needs a new user capture because no supplied subset passes initial-pair geometry. Process that capture unchanged through the same local Companion and quality gate.
 
+## Controlled Clean capture validation (2026-09-07)
+
+The supplied `Clean` subset provided a valid controlled test of the same local CPU SfM pipeline. All 13 source photographs formed one connected feature-match graph. COLMAP registered 9 photographs (69.2%), triangulated 537 landmarks, and retained 465 landmarks after the unchanged three-observation evidence filter. Its median recovered-camera baseline was 4.818 units; the robust landmark-cloud diagonal was 7.391 units, for a 1.534 diagonal-to-baseline ratio. The quality gate passed.
+
+This result distinguishes the prior failure from a general pipeline failure: the same toolchain and thresholds recover broadly distributed geometry when given a more coherent, overlapping source set. Four photos remained unregistered, which is expected for partial coverage. The reconstructed bundle is private session output and is not committed.
+
+The Android document picker is now explicitly launched with `image/heic` and `image/heif` alongside `image/*`, so the matching original files can be selected on devices whose providers do not include HEIC under the wildcard alone.
+
 ## Not yet demonstrated
 
 This repository does not include sensitive sample imagery or a bundled COLMAP binary, so a physical-device end-to-end run and latency benchmark remain required before declaring Milestone 0 complete. AR portal work is intentionally deferred.

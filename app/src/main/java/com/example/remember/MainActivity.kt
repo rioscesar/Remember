@@ -114,7 +114,7 @@ class MainActivity : AppCompatActivity() {
                     val memory = Memory(name = name, photos = emptyList())
                     store.save(memory)
                     pendingMemoryId = memory.id
-                    selectPhotos.launch(arrayOf("image/*"))
+                    selectPhotos.launch(SUPPORTED_IMAGE_MIME_TYPES)
                 }
             }
             .show()
@@ -127,7 +127,7 @@ class MainActivity : AppCompatActivity() {
         content.addView(body("${memory.photos.size} selected photographs. Original files remain where you keep them."))
         content.addView(button("Choose different photos") {
             pendingMemoryId = memory.id
-            selectPhotos.launch(arrayOf("image/*"))
+            selectPhotos.launch(SUPPORTED_IMAGE_MIME_TYPES)
         })
         if (memory.reconstruction == null) {
             content.addView(section("Putting this place back together…"))
@@ -239,5 +239,6 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val PENDING_MEMORY_ID = "pending_memory_id"
+        val SUPPORTED_IMAGE_MIME_TYPES = arrayOf("image/*", "image/heic", "image/heif")
     }
 }
