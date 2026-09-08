@@ -6,6 +6,12 @@ import kotlin.math.sin
 data class ProjectedPoint(val x: Float, val y: Float, val depth: Float)
 
 object SceneMath {
+    /**
+     * COLMAP world axes are X right, Y down, Z forward, while the renderer draws Y upward.
+     * Rotating 180 degrees about X converts between them; negating Y alone would mirror the scene.
+     */
+    fun toViewSpace(x: Float, y: Float, z: Float): Triple<Float, Float, Float> = Triple(x, -y, -z)
+
     fun project(point: EvidencePoint, yaw: Float, pitch: Float): ProjectedPoint {
         val cosYaw = cos(yaw)
         val sinYaw = sin(yaw)

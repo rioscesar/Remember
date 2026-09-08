@@ -81,7 +81,7 @@ This result distinguishes the prior failure from a general pipeline failure: the
 
 The Android document picker is now explicitly launched with `image/heic` and `image/heif` alongside `image/*`, so the matching original files can be selected on devices whose providers do not include HEIC under the wildcard alone.
 
-## Dense multi-view evidence spike — physical-device result: not acceptable
+## Dense multi-view evidence spike — dense geometry succeeded, scene coverage did not
 
 Using only the Clean run's recovered component, a local COLMAP CUDA 4.2.0 dense pipeline completed PatchMatch geometric consistency in 3.607 minutes and conservative stereo fusion in 0.068 minutes. The experiment did not create a mesh, fill holes, predict depth, generate textures, or synthesize unseen space.
 
@@ -101,9 +101,25 @@ Using only the Clean run's recovered component, a local COLMAP CUDA 4.2.0 dense 
 
 The dense exporter bounded every PLY and visibility record, confirmed exactly 28,297 visibility records with no trailing data, rejected the 1,323 two-view candidates, and wrote a private 2.87 MB import bundle outside the repository. The earlier stalled export was caused by accepting only Unix line endings in a Windows-line-ending PLY header; the replacement parser rejects EOF before `end_header`, checks declared record sizes, and cannot silently continue past malformed sidecar data.
 
-This objective geometry pass did **not** establish that the apartment is recognizable, navigable, or a successful Remember experience. On the Fold 6, after importing the matching Clean sources and this filtered bundle, the dense point view was **not recognizable as the apartment** relative to the sparse view. The dense experiment therefore failed the required perceptual acceptance criterion.
+This objective geometry pass did **not** establish that the apartment is recognizable, navigable, or a successful Remember experience. Two separate findings came out of the physical-device review, and the first invalidated the initial verdict.
 
-No additional rendering, meshing, hole filling, depth completion, AR, or generative technique was added to compensate. Higher point count alone is not sufficient evidence that the place can be recognized; this representation is not viable for Remember's intended experience with this capture.
+### Viewer axis defect (corrected)
+
+The first device assessment reported the scene as not recognizable. That assessment was confounded by a renderer defect: COLMAP world axes are X right, **Y down**, Z forward, but `EvidenceSceneView` drew Y as if it pointed up. Every scene Remember has ever rendered — sparse and dense — was therefore vertically flipped. The fix converts to view space with a proper 180-degree rotation about X, `(x, y, z) -> (x, -y, -z)`; negating Y alone would have mirrored the scene instead of righting it.
+
+After the correction, the dense scene resolves framed artwork on a wall clearly enough that the individual pieces are identifiable and printed text on them is legible. Dense multi-view stereo therefore does produce genuinely recognizable content from these photographs, which sparse reconstruction never did.
+
+### Remaining failure: the capture covers one plane, not a place
+
+With the orientation corrected, the scene is still **not recognizable as the apartment**. The cause is measurable rather than aesthetic. A principal-component analysis of the 26,974 accepted points gives per-axis standard deviations of 4.049, 0.323, and 0.026 reconstruction units; the thinnest principal axis is **1.7%** of the widest.
+
+The accepted geometry is a near-perfect single plane: one gallery wall. The reconstruction is faithful to its input, and the input only covers that wall. No density, rendering change, or filtering adjustment can recover a room that was never photographed from positions that see it.
+
+The Companion now measures this directly and refuses to export a single-surface scene, requiring the thinnest principal spread to be at least 5% of the widest. Re-running this bundle through the gate now fails with a 1.7% spread, so the gate predicts the perceptual outcome in advance rather than after a device round trip.
+
+No meshing, hole filling, depth completion, AR, or generative technique was added to compensate. Higher point count alone is not sufficient evidence that a place can be recognized.
+
+**Conclusion:** the dense pipeline is validated and worth keeping; the blocking limitation is capture coverage. The next experiment needs photographs that orbit an area and observe it from multiple directions, not a set aimed repeatedly at one wall.
 
 ## Not yet demonstrated
 

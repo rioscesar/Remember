@@ -28,11 +28,12 @@ class EvidenceSceneView(context: Context, private val points: List<EvidencePoint
         canvas.drawColor(Color.rgb(20, 20, 18))
         val scale = min(width, height) * 0.42f
         points.map { point ->
-            point to SceneMath.project(
-                point.copy(x = (point.x - centerX) / extent, y = (point.y - centerY) / extent, z = (point.z - centerZ) / extent),
-                yaw,
-                pitch,
+            val (x, y, z) = SceneMath.toViewSpace(
+                (point.x - centerX) / extent,
+                (point.y - centerY) / extent,
+                (point.z - centerZ) / extent,
             )
+            point to SceneMath.project(point.copy(x = x, y = y, z = z), yaw, pitch)
         }
             .sortedBy { (_, projected) -> projected.depth }
             .forEach { (point, projected) ->

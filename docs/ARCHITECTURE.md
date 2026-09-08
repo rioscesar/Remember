@@ -36,4 +36,8 @@ The Android importer independently requires `qualityGatePassed` from that report
 
 ## Dense evidence boundary
 
-The dense spike consumes only a sparse component that has already passed the quality gate. COLMAP geometric fusion supplies candidate points, then the Companion requires at least three **distinct** source views per retained point, fully parses the visibility sidecar, preserves original fused coordinates and colors, and applies the same camera-baseline-to-robust-spread gate. It creates no mesh, filled surface, completion, inferred texture, or generated region. On-device SfM and AR remain deliberately separate follow-on spikes and cannot replace the provenance checks in the import contract.
+The dense spike consumes only a sparse component that has already passed the quality gate. COLMAP geometric fusion supplies candidate points, then the Companion requires at least three **distinct** source views per retained point, fully parses the visibility sidecar, preserves original fused coordinates and colors, applies the same camera-baseline-to-robust-spread gate, and additionally rejects geometry whose thinnest principal spread is under 5% of its widest, because that describes a single photographed surface rather than a place. It creates no mesh, filled surface, completion, inferred texture, or generated region. On-device SfM and AR remain deliberately separate follow-on spikes and cannot replace the provenance checks in the import contract.
+
+## Rendering axes
+
+COLMAP world coordinates are X right, Y down, Z forward. The scene view draws Y upward, so imported points are converted with a 180-degree rotation about X, `(x, y, z) -> (x, -y, -z)`. This is a proper rotation and preserves handedness; negating Y alone would render a mirrored scene. An earlier build omitted this conversion and displayed every reconstruction vertically flipped.

@@ -10,6 +10,7 @@ from pathlib import Path
 
 MIN_VIEWS = 3
 MIN_POINTS = 1_000
+MIN_VOLUME_RATIO = 0.05
 
 
 def read_exact(file, size: int, context: str) -> bytes:
@@ -99,6 +100,40 @@ def median_camera_baseline(centers: list[tuple[float, float, float]]) -> float:
     return percentile(distances, 0.5)
 
 
+def principal_spread(points: list[dict]) -> list[float]:
+    """Standard deviation along each principal axis, largest first."""
+    count = len(points)
+    axes = ("x", "y", "z")
+    mean = [sum(point[axis] for point in points) / count for axis in axes]
+    covariance = [
+        [
+            sum((point[axes[row]] - mean[row]) * (point[axes[column]] - mean[column]) for point in points) / count
+            for column in range(3)
+        ]
+        for row in range(3)
+    ]
+    for _ in range(100):
+        row, column = max(
+            ((i, j) for i in range(3) for j in range(3) if i < j),
+            key=lambda pair: abs(covariance[pair[0]][pair[1]]),
+        )
+        if abs(covariance[row][column]) < 1e-12:
+            break
+        theta = (covariance[column][column] - covariance[row][row]) / (2 * covariance[row][column])
+        tangent = (1 if theta >= 0 else -1) / (abs(theta) + math.sqrt(theta * theta + 1))
+        cosine = 1 / math.sqrt(tangent * tangent + 1)
+        sine = tangent * cosine
+        for k in range(3):
+            left = cosine * covariance[k][row] - sine * covariance[k][column]
+            right = sine * covariance[k][row] + cosine * covariance[k][column]
+            covariance[k][row], covariance[k][column] = left, right
+        for k in range(3):
+            left = cosine * covariance[row][k] - sine * covariance[column][k]
+            right = sine * covariance[row][k] + cosine * covariance[column][k]
+            covariance[row][k], covariance[column][k] = left, right
+    return sorted((math.sqrt(max(covariance[i][i], 0.0)) for i in range(3)), reverse=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Export multi-view-supported COLMAP dense points.")
     parser.add_argument("--ply", type=Path, required=True)
@@ -137,6 +172,13 @@ def main() -> int:
     spread_ratio = robust_diagonal / median_baseline
     if spread_ratio < 0.5:
         raise RuntimeError("Dense geometry is too concentrated relative to camera baseline.")
+    spread = principal_spread(accepted)
+    volume_ratio = spread[2] / spread[0] if spread[0] > 0 else 0.0
+    if volume_ratio < MIN_VOLUME_RATIO:
+        raise RuntimeError(
+            "Recovered geometry is a single flat surface rather than an explorable place "
+            f"(thinnest principal spread is {volume_ratio:.1%} of the widest)."
+        )
     output = {
         "formatVersion": 1,
         "sourceImages": source_names,
@@ -156,6 +198,8 @@ def main() -> int:
             "landmarkRobustDiagonal": robust_diagonal,
             "medianCameraBaseline": median_baseline,
             "landmarkDiagonalToMedianBaseline": spread_ratio,
+            "principalSpread": spread,
+            "thinnestToWidestPrincipalSpread": volume_ratio,
         },
         "points": accepted,
     }
