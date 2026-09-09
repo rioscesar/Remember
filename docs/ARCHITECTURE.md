@@ -33,7 +33,7 @@ The provenance classes are:
 - **Interpolated:** captured pixels geometrically reprojected between known viewpoints;
 - **Imagined:** content without sufficient photographic evidence.
 
-Captured, reconstructed, and quality-gated interpolated evidence are allowed. Imagined content is not part of the evidence-backed experience. See [the representation spike](REPRESENTATION-SPIKE.md), [semantic-plane spike](SEMANTIC-PLANE-SPIKE.md), [photographic-coherence spike](WALL-COHERENCE-SPIKE.md), [radiance-field representation spike](RECONSTRUCTION-REPRESENTATION-SPIKE.md), and [sparse-view regularization / support-gate spike](SPARSE-VIEW-SUPPORT-GATE-SPIKE.md) for the measured alternatives and stop/go decisions.
+Captured, reconstructed, and quality-gated interpolated evidence are allowed. Imagined content is not part of the evidence-backed experience. See [the representation spike](REPRESENTATION-SPIKE.md), [semantic-plane spike](SEMANTIC-PLANE-SPIKE.md), [photographic-coherence spike](WALL-COHERENCE-SPIKE.md), [radiance-field representation spike](RECONSTRUCTION-REPRESENTATION-SPIKE.md), [sparse-view regularization / support-gate spike](SPARSE-VIEW-SUPPORT-GATE-SPIKE.md), and [hybrid supported spatial memory prototype](HYBRID-SPATIAL-MEMORY-SPIKE.md) for the measured alternatives and stop/go decisions.
 
 ## Evidence contract
 
