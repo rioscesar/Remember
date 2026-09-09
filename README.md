@@ -20,6 +20,7 @@ The project uses Kotlin and AndroidX. It targets Android 15 (API 35) and support
 - [Radiance-field representation spike](docs/RECONSTRUCTION-REPRESENTATION-SPIKE.md)
 - [Sparse-view regularization and support-gate spike](docs/SPARSE-VIEW-SUPPORT-GATE-SPIKE.md)
 - [Hybrid supported spatial memory prototype](docs/HYBRID-SPATIAL-MEMORY-SPIKE.md)
+- [Spatial-continuity photo transitions](docs/SPATIAL-TRANSITION-SPIKE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Privacy](docs/PRIVACY.md)
 - [Milestone 0 results](docs/MILESTONE-0-RESULTS.md)
