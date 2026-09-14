@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Milestone 1.0 evidence-first Remember/Imagine room-shell builder.
+"""Milestone 1.1 evidence-first Remember/Imagine room-shell builder.
 
 This is a small, offline companion tool with no WebGL/Three.js dependency.
 It consumes an already-validated dense point cloud (PLY + MVS visibility
@@ -20,10 +20,13 @@ sidecar) and camera poses, then:
      pixels come directly from real per-point colour; unsupported,
      non-critical gaps are bounded-inferred exactly as Doctrine v2 requires
      (`evidence_doctrine.bounded_inference_fill`). Faces with NO recovered
-     plane are completed first by the local deterministic Imagine fallback:
-     a generic structural atlas card marked 100% IMAGINED, visible only when
-     the user turns on Imagine. This is not frame-by-frame generation and is
-     not represented as evidence.
+     plane are completed first in canonical atlas space. Milestone 1.1 tries
+     one validated local learned inpainting pass on the strongest missing
+     face, using hard generatable/locked/critical masks and exact protected
+     pixel restoration. If the local Diffusers model/runtime is unavailable
+     or validation fails, it reports the blocker and keeps Milestone 1.0's
+     deterministic structural Imagine fallback. This is not frame-by-frame
+     generation and is not represented as evidence.
   5. Clusters the residual (non-planar) points left over after plane
      removal into candidate furniture/object volumes
      (`cluster_residual_points`) and places each as a flat, explicitly
@@ -87,6 +90,12 @@ from evidence_doctrine import (
     provenance_percentages,
 )
 from export_dense_evidence import read_ply, read_visibility
+from learned_inpainting import (
+    DEFAULT_MODEL_ID,
+    LearnedInpaintingConfig,
+    learned_dependencies_status,
+    run_learned_inpainting,
+)
 from representation_spike import detect_planes, parse_views
 from semantic_plane_spike import fit_plane
 
@@ -241,38 +250,132 @@ def estimate_seed_color(faces: dict) -> np.ndarray:
     return np.mean(np.asarray(samples), axis=0)
 
 
-def build_missing_face_imaginations(faces: dict, face_reports: dict, atlas_width: int = 480) -> dict:
-    """Generate missing room faces before any object-gap consideration."""
+def build_missing_face_imaginations(
+    faces: dict,
+    face_reports: dict,
+    atlas_width: int = 480,
+    engine: str = "auto",
+    learned_config: LearnedInpaintingConfig | None = None,
+) -> tuple[dict, dict]:
+    """Generate missing room faces before any object-gap consideration.
+
+    Learned diffusion is attempted once on the largest missing canonical face
+    only when requested/auto-selected. If that first face fails validation or
+    model loading, the routine records the blocker and falls back to the
+    deterministic Milestone 1.0 atlas-space structural generator for every
+    missing face. Remaining missing faces use learned generation only after the
+    first face succeeds.
+    """
     seed_color = estimate_seed_color(faces)
     generated = {}
-    for key in FACE_KEYS:
-        if faces[key]["recovered"]:
-            continue
+    learned_config = learned_config or LearnedInpaintingConfig()
+    learned_status = {
+        "requestedEngine": engine,
+        "selectedEngine": "deterministic",
+        "model": learned_config.model_id,
+        "dependencyStatus": learned_dependencies_status(learned_config.package_path),
+        "firstFace": None,
+        "firstFaceAccepted": False,
+        "blocker": None,
+        "attemptedFaces": [],
+    }
+
+    missing = [key for key in FACE_KEYS if not faces[key]["recovered"]]
+    missing.sort(key=lambda k: float(faces[k]["widthPx"]) * float(faces[k]["heightPx"]), reverse=True)
+    use_learned = engine in {"auto", "learned"}
+    learned_enabled_for_remaining = False
+
+    for index, key in enumerate(missing):
         width = atlas_width
         aspect = faces[key]["heightPx"] / max(faces[key]["widthPx"], 1)
         height = max(1, min(2000, round(width * aspect)))
         base_provenance = np.full((height, width), ABSENT, dtype=np.uint8)
+        base_color = np.zeros((height, width, 3), dtype=np.uint8)
         structural = np.ones((height, width), dtype=bool)
         critical = np.zeros((height, width), dtype=bool)
         masks = generation_masks(base_provenance, structural, critical)
-        image, provenance = deterministic_structural_imagine(
-            width, height, seed_color, masks["generatable"], masks["locked"]
+        method = "local deterministic structural Imagine fallback in canonical room-face atlas space"
+        source = "seeded from aggregate recovered structural face colour; no source-frame generation, no cloud"
+        learned_metrics = None
+
+        should_try_learned = (
+            use_learned
+            and (index == 0 or learned_enabled_for_remaining)
+            and learned_status["blocker"] is None
         )
+        if should_try_learned:
+            if learned_status["firstFace"] is None:
+                learned_status["firstFace"] = key
+            learned = run_learned_inpainting(
+                base_color,
+                base_provenance,
+                masks["generatable"],
+                masks["locked"],
+                critical,
+                face_key=key,
+                config=learned_config,
+            )
+            learned_metrics = learned.metrics
+            learned_status["attemptedFaces"].append({"face": key, **learned.metrics, "blocker": learned.blocker})
+            if learned.accepted and learned.image_bgr is not None and learned.provenance is not None:
+                image, provenance = learned.image_bgr, learned.provenance
+                learned_enabled_for_remaining = True
+                learned_status["firstFaceAccepted"] = True
+                learned_status["selectedEngine"] = "learned-diffusion"
+                method = "local learned diffusion inpainting in canonical room-face atlas space"
+                source = "stable-diffusion-v1-5 inpainting family; fixed seed; local process only; protected pixels restored exactly"
+            else:
+                learned_status["blocker"] = learned.blocker or "learned inpainting did not validate"
+                if engine == "learned":
+                    learned_status["selectedEngine"] = "fail-closed-learned"
+                    faces[key]["imagined"] = False
+                    face_reports[key]["imagined"] = {
+                        "generated": False,
+                        "method": "learned diffusion requested",
+                        "failClosed": True,
+                        "blocker": learned_status["blocker"],
+                        "learned": learned_metrics,
+                    }
+                    continue
+                image, provenance = deterministic_structural_imagine(
+                    width, height, seed_color, masks["generatable"], masks["locked"]
+                )
+        else:
+            if engine == "learned":
+                faces[key]["imagined"] = False
+                face_reports[key]["imagined"] = {
+                    "generated": False,
+                    "method": "learned diffusion requested",
+                    "failClosed": True,
+                    "blocker": learned_status["blocker"] or "learned first face was not accepted",
+                }
+                continue
+            image, provenance = deterministic_structural_imagine(
+                width, height, seed_color, masks["generatable"], masks["locked"]
+            )
+
         faces[key]["imaginedImage"] = image
         faces[key]["imaginedProvenance"] = provenance
         faces[key]["imagined"] = True
         percentages = provenance_percentages(provenance)
         generated[key] = {
             "generated": True,
-            "method": "local deterministic structural Imagine fallback in canonical room-face atlas space",
-            "source": "seeded from aggregate recovered structural face colour; no source-frame generation, no cloud",
+            "method": method,
+            "source": source,
             "lockedPixels": int(masks["locked"].sum()),
             "generatablePixels": int(masks["generatable"].sum()),
             "absentPixels": int(masks["absent"].sum()),
+            "learned": learned_metrics,
             **percentages,
         }
         face_reports[key]["imagined"] = generated[key]
-    return generated
+    if not missing:
+        learned_status["selectedEngine"] = "none-no-missing-faces"
+    elif engine == "deterministic":
+        learned_status["blocker"] = "learned engine not requested"
+    elif learned_status["blocker"] and engine == "auto":
+        learned_status["selectedEngine"] = "deterministic"
+    return generated, learned_status
 
 
 def aggregate_face_provenance(faces: dict) -> dict:
@@ -437,7 +540,7 @@ def write_face_images(output: Path, key: str, image: np.ndarray | None, provenan
 
 SHELL_TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Remember -- Milestone 1.0 Remember/Imagine room-shell walkthrough (private)</title>
+<title>Remember -- Milestone 1.1 Remember/Imagine room-shell walkthrough (private)</title>
 <style>
   html,body{margin:0;height:100%;background:#0a0a0d;overflow:hidden;font-family:system-ui,sans-serif;color:#eee}
   #scene{position:absolute;inset:0;perspective:1400px;perspective-origin:50% 50%}
@@ -465,9 +568,11 @@ SHELL_TEMPLATE = """<!doctype html>
   <button id="debugToggle">Debug provenance off</button>
   <div id="caption" style="margin-top:8px;opacity:.85">
     Drag to look around. WASD / arrow keys to move (clamped to the recovered envelope).
-    Remember shows only OBSERVED/RECONSTRUCTED/INFERRED evidence. Imagine adds generic local structural
-    room-face completions marked IMAGINED; ambiguous and critical unknowns remain absent. Blue boxes are
-    residual-point evidence volumes (furniture-scale, position/size/colour only, no shape completion).
+    Remember shows only OBSERVED/RECONSTRUCTED/INFERRED evidence. Imagine first uses validated local
+    learned atlas inpainting when the model exists, otherwise the deterministic structural fallback;
+    every accepted generated pixel is IMAGINED, protected pixels are restored exactly, and ambiguous
+    or critical unknowns remain absent. Blue boxes are residual-point evidence volumes
+    (furniture-scale, position/size/colour only, no shape completion).
   </div>
 </div>
 <div id="metrics"></div>
@@ -619,9 +724,9 @@ def write_prototype(output: Path, faces: dict, objects: list[dict], metrics: dic
 
     envelope_half_px = metrics["envelopeHalfPx"]
     metrics_summary = (
-        f"Milestone 1.0 -- Remember faces: {metrics['shell']['facesWithEvidence']}/6 | "
-        f"Imagine faces: {metrics['generation']['generatedFacesCount']} | object volumes: {len(objects)} | "
-        f"orientation gravity-estimated: {metrics['orientation']['gravityEstimated']}"
+        f"Milestone 1.1 -- Remember faces: {metrics['shell']['facesWithEvidence']}/6 | "
+        f"Imagine faces: {metrics['generation']['generatedFacesCount']} via {metrics['generation']['selectedApproach']} | "
+        f"object volumes: {len(objects)} | orientation gravity-estimated: {metrics['orientation']['gravityEstimated']}"
     )
     data = {"faces": js_faces, "objects": js_objects, "envelopeHalfPx": envelope_half_px, "metricsSummary": metrics_summary}
     html = SHELL_TEMPLATE.replace("__DATA_JSON__", json.dumps(data))
@@ -666,6 +771,19 @@ def main() -> None:
     parser.add_argument("--visibility", type=Path, required=True)
     parser.add_argument("--images-text", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--imagine-engine",
+        choices=("auto", "deterministic", "learned"),
+        default="auto",
+        help="auto tries one validated local learned face first, then falls back deterministically on blocker.",
+    )
+    parser.add_argument("--learned-model", default=DEFAULT_MODEL_ID)
+    parser.add_argument("--learned-package-path", type=Path, default=None)
+    parser.add_argument("--allow-model-download", action="store_true")
+    parser.add_argument("--learned-seed", type=int, default=1101)
+    parser.add_argument("--learned-steps", type=int, default=24)
+    parser.add_argument("--learned-guidance", type=float, default=6.0)
+    parser.add_argument("--learned-max-resolution", type=int, default=512)
     args = parser.parse_args()
 
     vertices = read_ply(args.ply)
@@ -706,14 +824,28 @@ def main() -> None:
     generation_start = time.perf_counter()
     vram_before = measure_vram_used_mb()
     face_reports = assign_planes_to_faces(planes, models, orientation, faces)
-    generated_faces = build_missing_face_imaginations(faces, face_reports)
+    learned_config = LearnedInpaintingConfig(
+        model_id=args.learned_model,
+        seed=args.learned_seed,
+        steps=args.learned_steps,
+        guidance_scale=args.learned_guidance,
+        max_resolution=args.learned_max_resolution,
+        allow_model_download=args.allow_model_download,
+        package_path=args.learned_package_path,
+    )
+    generated_faces, learned_status = build_missing_face_imaginations(
+        faces,
+        face_reports,
+        engine=args.imagine_engine,
+        learned_config=learned_config,
+    )
     vram_after = measure_vram_used_mb()
     generation_latency_ms = (time.perf_counter() - generation_start) * 1000
     object_cards, rejected_clusters = build_object_cards(residual, orientation, envelope)
 
     faces_with_evidence = sum(1 for report in face_reports.values() if report["recovered"])
     metrics = {
-        "milestone": "1.0-founder-steering",
+        "milestone": "1.1-founder-steering",
         "orientation": orientation,
         "envelope": envelope,
         "envelopeHalfPx": {"x": float(half_extent[0]), "y": float(half_extent[1]), "z": float(half_extent[2])},
@@ -726,11 +858,16 @@ def main() -> None:
             "faceProvenanceAggregate": aggregate_face_provenance(faces),
         },
         "generation": {
-            "selectedApproach": "deterministic local atlas-space structural Imagine fallback",
-            "whyNoDiffusionModel": "RTX 3070 CUDA is usable, but no local Diffusers install or cached generative model was available; "
-                                "Azure/cloud generation is intentionally not used.",
+            "selectedApproach": learned_status["selectedEngine"]
+                                if learned_status["selectedEngine"] != "deterministic"
+                                else "deterministic local atlas-space structural Imagine fallback",
+            "requestedApproach": args.imagine_engine,
+            "learnedStatus": learned_status,
+            "whyNoDiffusionModel": learned_status["blocker"],
             "pipelineSpace": "canonical room-face/atlas space, never per-source-frame generation",
             "provenancePriority": "OBSERVED > RECONSTRUCTED > INFERRED > IMAGINED > ABSENT",
+            "protectedPixelPolicy": "OBSERVED/RECONSTRUCTED, critical, and non-generatable pixels are restored exactly after learned generation; "
+                                    "accepted learned results require protectedModifiedPixels=0 and criticalViolations=0.",
             "generatedFacesCount": len(generated_faces),
             "generatedFaces": generated_faces,
             "generatedObjectGapsCount": 0,

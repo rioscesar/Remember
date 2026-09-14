@@ -27,22 +27,28 @@ The project uses Kotlin and AndroidX. It targets Android 15 (API 35) and support
 - [Milestone 0 results](docs/MILESTONE-0-RESULTS.md)
 - [Milestone 0.9 founder steering report](docs/MILESTONE-0.9-FOUNDER-REPORT.md)
 - [Milestone 1.0 founder steering report](docs/MILESTONE-1.0-FOUNDER-REPORT.md)
+- [Milestone 1.1 founder steering report](docs/MILESTONE-1.1-FOUNDER-REPORT.md)
 - [Development guide](docs/DEVELOPMENT.md)
 - [Contributing](CONTRIBUTING.md)
 
-The Milestone 1.0 private desktop walkthrough is built with
+The Milestone 1.1 private desktop walkthrough is built with
 `tools/milestone09_walkthrough.py`. It renders a coarse six-face 3D room
 shell in pure CSS (no WebGL/Three.js), with pointer-drag look and WASD/arrow
 translation clamped to the recovered envelope. The walkthrough has a clear
 **Remember** view for evidence-backed OBSERVED / RECONSTRUCTED / INFERRED
-faces, an **Imagine** view that adds only local deterministic IMAGINED
-structural room-face atlases when no local learned generator is available,
-and a debug provenance view. Completion happens in canonical room-face/atlas
-space, never frame-by-frame; OBSERVED/RECONSTRUCTED and critical regions are
-locked, ambiguous/critical unknowns remain ABSENT, and object gap completion
-is disabled unless confidence is adequate. The tool emits aggregate metrics
-and provenance-coded views in the requested output directory; private photos,
-poses, masks, models, and renders must remain outside the repository.
+faces, an **Imagine** view that first attempts validated local learned
+inpainting on the strongest missing canonical face and otherwise falls back
+truthfully to the Milestone 1.0 deterministic IMAGINED structural atlas
+fallback, and a debug provenance view. Completion happens in canonical
+room-face/atlas space, never frame-by-frame; OBSERVED/RECONSTRUCTED,
+non-generatable, and critical regions are restored/locked exactly,
+ambiguous/critical unknowns remain ABSENT, and object gap completion is
+disabled unless confidence is adequate. The learned path is local-only,
+fixed-seed, fail-closed, and only becomes the default when the configured
+Diffusers inpainting model is available and validates. The tool emits
+aggregate metrics and provenance-coded views in the requested output
+directory; private photos, poses, masks, models, and renders must remain
+outside the repository.
 
 ## Licensing
 

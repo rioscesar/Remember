@@ -1,0 +1,6 @@
+# Install into an isolated --target directory or venv; do not replace the
+# reconstruction environment's CUDA torch. Known-compatible with torch 2.1.2+cu118.
+diffusers==0.30.3
+transformers==4.44.2
+accelerate==0.33.0
+safetensors==0.4.5

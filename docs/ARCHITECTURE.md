@@ -46,10 +46,18 @@ whichever coarse face (left/right/floor/ceiling/back/front) their normal and
 extent best match. A face with no matching plane is no longer hidden inside a
 flat "no evidence" state: the prototype exposes a **Remember / Imagine**
 toggle. Remember shows only evidence-backed OBSERVED, RECONSTRUCTED, and
-bounded INFERRED face atlases. Imagine adds local deterministic generic
-structural room-face atlases marked IMAGINED when no cached local learned
-generator is available; this is done in canonical room-face/atlas space,
-never by source-frame generation, and it is never promoted to evidence.
+bounded INFERRED face atlases. Milestone 1.1 generalizes the Imagine step:
+the default `auto` mode targets the local
+`stable-diffusion-v1-5/stable-diffusion-inpainting` Diffusers pipeline on the
+strongest missing canonical room-face atlas first, using fixed seed, boring
+structural prompts, hard GENERATABLE/LOCKED/CRITICAL masks, exact protected
+pixel restoration after generation, and required zero protected-pixel changes
+and zero critical violations before accepting any IMAGINED pixels. If
+dependencies, model weights, auth/network/cache, CUDA, or guardrail validation
+fail, the learned path is not presented as having run; metrics record the
+blocker and the Milestone 1.0 deterministic generic structural fallback
+remains available. Learned output is local-only, never source-frame
+generation, and never promoted to evidence.
 Residual (non-planar) points are grid-clustered into axis-aligned evidence
 cards for partial object placement; a compactness filter rejects any cluster
 whose span exceeds 40% of the room envelope on any axis as a clustering
@@ -63,7 +71,7 @@ cannot be inferred or imagined over. This is a coarse box-shell prototype
 review surface, not an Android/AR scene format or a measured-scale
 reconstruction, and its outputs remain private.
 
-Milestone 0.8 introduces **Representation Doctrine v2** (`tools/evidence_doctrine.py`), which amends this for low-risk structural surfaces only: OBSERVED and RECONSTRUCTED pixels are unchanged, but a bounded, non-generative INFERRED tier is now permitted for conservative structural continuation (wall/floor/ceiling gaps), strictly gated so it can never touch identity-critical content (faces, artwork, screens, signage, mirrors, personal objects), which stays absent rather than completed. Milestone 1.0 adds explicit IMAGINED provenance for the separate founder-review Imagine layer only. The enforced priority is OBSERVED > RECONSTRUCTED > INFERRED > IMAGINED > ABSENT; OBSERVED/RECONSTRUCTED and critical masks are LOCKED, only ABSENT low-risk structural texels are GENERATABLE, and ambiguous or critical unknowns stay ABSENT. See [evidence-maximizing structural completion](EVIDENCE-MAXIMIZING-RECONSTRUCTION-SPIKE.md) and [the Milestone 1.0 founder report](MILESTONE-1.0-FOUNDER-REPORT.md) for the implementation, guardrail tests, and measured results.
+Milestone 0.8 introduces **Representation Doctrine v2** (`tools/evidence_doctrine.py`), which amends this for low-risk structural surfaces only: OBSERVED and RECONSTRUCTED pixels are unchanged, but a bounded, non-generative INFERRED tier is now permitted for conservative structural continuation (wall/floor/ceiling gaps), strictly gated so it can never touch identity-critical content (faces, artwork, screens, signage, mirrors, personal objects), which stays absent rather than completed. Milestone 1.0 adds explicit IMAGINED provenance for the separate founder-review Imagine layer only, and Milestone 1.1 adds optional learned atlas inpainting behind the same doctrine gates. The enforced priority is OBSERVED > RECONSTRUCTED > INFERRED > IMAGINED > ABSENT; OBSERVED/RECONSTRUCTED and critical masks are LOCKED, only ABSENT low-risk structural texels are GENERATABLE, and ambiguous or critical unknowns stay ABSENT. See [evidence-maximizing structural completion](EVIDENCE-MAXIMIZING-RECONSTRUCTION-SPIKE.md), [the Milestone 1.0 founder report](MILESTONE-1.0-FOUNDER-REPORT.md), and [the Milestone 1.1 founder report](MILESTONE-1.1-FOUNDER-REPORT.md) for the implementation, guardrail tests, and measured results.
 
 ## Evidence contract
 
