@@ -776,7 +776,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--imagine-engine",
-        choices=("auto", "deterministic", "learned"),
+        choices=("auto", "deterministic", "learned", "memory-conditioned"),
         default="auto",
         help="auto tries one validated local learned face first, then falls back deterministically on blocker.",
     )
@@ -787,6 +787,8 @@ def main() -> None:
     parser.add_argument("--learned-steps", type=int, default=24)
     parser.add_argument("--learned-guidance", type=float, default=6.0)
     parser.add_argument("--learned-max-resolution", type=int, default=512)
+    parser.add_argument("--images-dir", type=Path, default=None, help="Optional directory containing source images for context memory conditioning.")
+    parser.add_argument("--ip-adapter-scale", type=float, default=0.7, help="Scale for IP-Adapter visual conditioning.")
     parser.add_argument(
         "--imagine-max-faces",
         type=int,
@@ -835,6 +837,26 @@ def main() -> None:
     generation_start = time.perf_counter()
     vram_before = measure_vram_used_mb()
     face_reports = assign_planes_to_faces(planes, models, orientation, faces)
+    use_ip = (args.imagine_engine == "memory-conditioned")
+    context_img = None
+    if use_ip and args.images_dir is not None and args.images_dir.exists():
+        try:
+            from context_ranking import rank_source_photos, build_context_contact_sheet
+            ranking_results = rank_source_photos(
+                views=views,
+                supports=supports,
+                wall_supports=supports,
+                orientation=orientation,
+                target_face_normal_room=(0.0, 0.0, -1.0),
+                img_dir=args.images_dir,
+                top_k=4,
+            )
+            _, crops_list, _ = build_context_contact_sheet(ranking_results, img_dir=args.images_dir)
+            if crops_list:
+                context_img = crops_list[0]
+        except Exception:
+            pass
+
     learned_config = LearnedInpaintingConfig(
         model_id=args.learned_model,
         seed=args.learned_seed,
@@ -843,6 +865,9 @@ def main() -> None:
         max_resolution=args.learned_max_resolution,
         allow_model_download=args.allow_model_download,
         package_path=args.learned_package_path,
+        use_ip_adapter=use_ip,
+        ip_adapter_scale=args.ip_adapter_scale,
+        context_image=context_img,
     )
     generated_faces, learned_status = build_missing_face_imaginations(
         faces,

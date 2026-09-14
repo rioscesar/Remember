@@ -4,6 +4,10 @@ The module is deliberately fail-closed: missing dependencies, missing model
 weights, auth/network failures, CUDA/runtime errors, and guardrail violations
 return an explicit blocked result instead of fabricating learned output. The
 deterministic structural fallback remains the caller's safe default.
+
+Milestone 1.2 adds optional visual memory conditioning via local IP-Adapter.
+Contextual memory from ranked source photos may guide generation, but all
+generated output remains strictly IMAGINED in provenance.
 """
 
 from __future__ import annotations
@@ -21,6 +25,9 @@ import numpy as np
 from evidence_doctrine import ABSENT, IMAGINED, apply_provenance_priority
 
 DEFAULT_MODEL_ID = "stable-diffusion-v1-5/stable-diffusion-inpainting"
+DEFAULT_IP_ADAPTER_MODEL_ID = "h94/IP-Adapter"
+DEFAULT_IP_ADAPTER_WEIGHT_NAME = "ip-adapter_sd15.safetensors"
+DEFAULT_PACKAGE_PATH = Path(os.environ.get("REMEMBER_LEARNED_PYTHONPATH", r"C:/Users/riosc/.copilot/session-state/f7b0095f-4374-4b1c-a655-bdbc61baba17/files/learned-inpainting-packages"))
 DEFAULT_NEGATIVE_PROMPT = (
     "people, person, face, body, pet, animal, text, letters, signage, logo, "
     "painting, poster, artwork, framed picture, screen, television, mirror, "
@@ -37,7 +44,13 @@ class LearnedInpaintingConfig:
     max_resolution: int = 512
     allow_model_download: bool = False
     torch_dtype: str = "auto"
-    package_path: Path | None = None
+    package_path: Path | None = DEFAULT_PACKAGE_PATH if DEFAULT_PACKAGE_PATH.exists() else None
+    use_ip_adapter: bool = False
+    ip_adapter_model_id: str = DEFAULT_IP_ADAPTER_MODEL_ID
+    ip_adapter_subfolder: str = "models"
+    ip_adapter_weight_name: str = DEFAULT_IP_ADAPTER_WEIGHT_NAME
+    ip_adapter_scale: float = 0.5
+    context_image: np.ndarray | None = None
 
 
 @dataclass
@@ -95,7 +108,7 @@ def _memory_used_mb() -> int | None:
 
 def _load_pipeline(config: LearnedInpaintingConfig):
     add_optional_package_path(config.package_path)
-    missing = [name for name, present in learned_dependencies_status().items() if not present]
+    missing = [name for name, present in learned_dependencies_status(config.package_path).items() if not present]
     if missing:
         raise RuntimeError(f"missing local learned inpainting dependencies: {', '.join(missing)}")
 
@@ -122,8 +135,26 @@ def _load_pipeline(config: LearnedInpaintingConfig):
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     pipe = pipe.to(device)
+    pipe.safety_checker = None
     if hasattr(pipe, "set_progress_bar_config"):
         pipe.set_progress_bar_config(disable=True)
+
+    if config.use_ip_adapter:
+        try:
+            pipe.load_ip_adapter(
+                config.ip_adapter_model_id,
+                subfolder=config.ip_adapter_subfolder,
+                weight_name=config.ip_adapter_weight_name,
+                torch_dtype=dtype,
+                local_files_only=not config.allow_model_download,
+            )
+            pipe.set_ip_adapter_scale(config.ip_adapter_scale)
+        except Exception as exc:
+            mode = "local cache" if not config.allow_model_download else "download/auth/cache"
+            raise RuntimeError(
+                f"unable to load IP-Adapter {config.ip_adapter_model_id} from {mode}: {exc}"
+            ) from exc
+
     return pipe, torch, device, str(dtype).replace("torch.", "")
 
 
@@ -136,13 +167,13 @@ def run_learned_inpainting(
     *,
     face_key: str | None = None,
     config: LearnedInpaintingConfig | None = None,
-    runner: Callable[[np.ndarray, np.ndarray, str], np.ndarray] | None = None,
+    runner: Callable[[np.ndarray, np.ndarray, str, np.ndarray | None], np.ndarray] | None = None,
 ) -> LearnedInpaintingResult:
     """Inpaint only GENERATABLE pixels and verify protected pixels are exact.
 
     `runner` is a test seam that receives resized RGB base, resized inpaint
-    mask, and prompt, and must return a resized RGB image. Production callers
-    leave it unset to use local Diffusers.
+    mask, prompt, and optional context_rgb, and must return a resized RGB image.
+    Production callers leave it unset to use local Diffusers.
     """
     config = config or LearnedInpaintingConfig()
     height, width = base_provenance.shape
@@ -184,8 +215,26 @@ def run_learned_inpainting(
             (target_w, target_h),
             interpolation=cv2.INTER_NEAREST,
         )
+
+        context_rgb = None
+        if config.context_image is not None:
+            if config.context_image.ndim == 3 and config.context_image.shape[2] == 3:
+                # Expecting BGR or RGB; assume BGR if coming from OpenCV
+                context_rgb = cv2.cvtColor(config.context_image, cv2.COLOR_BGR2RGB)
+            else:
+                context_rgb = config.context_image
+
+        if config.use_ip_adapter and context_rgb is None and runner is None:
+            raise RuntimeError("IP-Adapter conditioning requested but no context_image was provided")
+
         if runner is not None:
-            generated_rgb = runner(resized_rgb, resized_mask, prompt)
+            # Runner test seam support
+            import inspect
+            sig = inspect.signature(runner)
+            if len(sig.parameters) >= 4:
+                generated_rgb = runner(resized_rgb, resized_mask, prompt, context_rgb)
+            else:
+                generated_rgb = runner(resized_rgb, resized_mask, prompt)
         else:
             try:
                 import torch
@@ -203,18 +252,23 @@ def run_learned_inpainting(
 
             pipe, torch, model_device, precision = _load_pipeline(config)
             generator = torch.Generator(device=model_device).manual_seed(config.seed)
+
+            kwargs = {
+                "prompt": prompt,
+                "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
+                "image": Image.fromarray(resized_rgb),
+                "mask_image": Image.fromarray(resized_mask),
+                "width": target_w,
+                "height": target_h,
+                "num_inference_steps": config.steps,
+                "guidance_scale": config.guidance_scale,
+                "generator": generator,
+            }
+            if config.use_ip_adapter and context_rgb is not None:
+                kwargs["ip_adapter_image"] = Image.fromarray(context_rgb)
+
             with torch.inference_mode():
-                output = pipe(
-                    prompt=prompt,
-                    negative_prompt=DEFAULT_NEGATIVE_PROMPT,
-                    image=Image.fromarray(resized_rgb),
-                    mask_image=Image.fromarray(resized_mask),
-                    width=target_w,
-                    height=target_h,
-                    num_inference_steps=config.steps,
-                    guidance_scale=config.guidance_scale,
-                    generator=generator,
-                )
+                output = pipe(**kwargs)
             generated_rgb = np.asarray(output.images[0].convert("RGB"))
             del pipe
             if torch.cuda.is_available():
@@ -237,6 +291,10 @@ def run_learned_inpainting(
         "generatablePixels": int(generatable.sum()),
         "lockedPixels": int(locked_mask.sum()),
         "criticalPixels": int(critical_mask.sum()),
+        "useIpAdapter": config.use_ip_adapter,
+        "ipAdapterModel": config.ip_adapter_model_id if config.use_ip_adapter else None,
+        "ipAdapterScale": config.ip_adapter_scale if config.use_ip_adapter else None,
+        "hasContextImage": config.context_image is not None,
     }
     if blocker is not None:
         return LearnedInpaintingResult(

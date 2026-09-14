@@ -94,3 +94,15 @@ The dense spike consumes only a sparse component that has already passed the qua
 ## Rendering axes
 
 COLMAP world coordinates are X right, Y down, Z forward. The scene view draws Y upward, so imported points are converted with a 180-degree rotation about X, `(x, y, z) -> (x, -y, -z)`. This is a proper rotation and preserves handedness; negating Y alone would render a mirrored scene. An earlier build omitted this conversion and displayed every reconstruction vertically flipped.
+
+
+Milestone 1.2 investigates visual memory conditioning for canonical room-face
+completion. Using local IP-Adapter conditioned on ranked source photographs
+(selected via camera-to-face geometry, 3D point support, spatial proximity,
+and semantic wall coverage), visual features and color palettes guide the
+local inpainting process. Even when contextual evidence guides generation, all
+generated pixels remain strictly IMAGINED in provenance (never relabeled as
+RECONSTRUCTED or OBSERVED), protected pixels are restored exactly, and
+context consistency checks (palette Delta E, structural edge continuity, and
+ADE20K semantic unexpected additions) verify generation quality against
+hallucinatory additions.
