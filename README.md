@@ -26,17 +26,23 @@ The project uses Kotlin and AndroidX. It targets Android 15 (API 35) and support
 - [Privacy](docs/PRIVACY.md)
 - [Milestone 0 results](docs/MILESTONE-0-RESULTS.md)
 - [Milestone 0.9 founder steering report](docs/MILESTONE-0.9-FOUNDER-REPORT.md)
+- [Milestone 1.0 founder steering report](docs/MILESTONE-1.0-FOUNDER-REPORT.md)
 - [Development guide](docs/DEVELOPMENT.md)
 - [Contributing](CONTRIBUTING.md)
 
-The Milestone 0.9 private desktop walkthrough is built with
+The Milestone 1.0 private desktop walkthrough is built with
 `tools/milestone09_walkthrough.py`. It renders a coarse six-face 3D room
 shell in pure CSS (no WebGL/Three.js), with pointer-drag look and WASD/arrow
-translation clamped to the recovered envelope, per-face evidence textures or
-an explicit "no evidence" panel, and partial evidence-backed object cards
-from residual (non-planar) point clusters. It emits only aggregate metrics
-and provenance-coded views in the requested output directory; private
-photos, poses, masks, and renders must remain outside the repository.
+translation clamped to the recovered envelope. The walkthrough has a clear
+**Remember** view for evidence-backed OBSERVED / RECONSTRUCTED / INFERRED
+faces, an **Imagine** view that adds only local deterministic IMAGINED
+structural room-face atlases when no local learned generator is available,
+and a debug provenance view. Completion happens in canonical room-face/atlas
+space, never frame-by-frame; OBSERVED/RECONSTRUCTED and critical regions are
+locked, ambiguous/critical unknowns remain ABSENT, and object gap completion
+is disabled unless confidence is adequate. The tool emits aggregate metrics
+and provenance-coded views in the requested output directory; private photos,
+poses, masks, models, and renders must remain outside the repository.
 
 ## Licensing
 

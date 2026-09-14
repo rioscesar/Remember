@@ -1,7 +1,7 @@
 """Shared Representation Doctrine v2 primitives for Milestone 0.8.
 
-Defines the four evidence classes (OBSERVED, RECONSTRUCTED, INFERRED,
-IMAGINED -- the last of which is never produced by this codebase), the
+Defines the evidence classes (OBSERVED, RECONSTRUCTED, INFERRED,
+IMAGINED, ABSENT), the
 ADE20K risk-tier classification used to decide what may ever be
 conservatively inferred, and the single bounded-inference fill routine
 used everywhere inference is allowed. Keeping this logic in one shared,
@@ -25,7 +25,7 @@ ABSENT = 0                # unsupported, and either critical or beyond the infer
 OBSERVED = 1               # a single captured photograph directly supports this pixel
 RECONSTRUCTED = 2          # two or more captured photographs agree on this pixel
 INFERRED = 3               # no direct capture; conservatively completed from nearby evidence
-IMAGINED = 4               # never produced; reserved so provenance maps can always represent it as 0%
+IMAGINED = 4               # local/privacy-preserving completion without direct photographic evidence
 
 EVIDENCE_CLASS_NAMES = {
     ABSENT: "ABSENT",
@@ -33,6 +33,14 @@ EVIDENCE_CLASS_NAMES = {
     RECONSTRUCTED: "RECONSTRUCTED",
     INFERRED: "INFERRED",
     IMAGINED: "IMAGINED",
+}
+
+PROVENANCE_PRIORITY = {
+    ABSENT: 0,
+    IMAGINED: 1,
+    INFERRED: 2,
+    RECONSTRUCTED: 3,
+    OBSERVED: 4,
 }
 
 # --------------------------------------------------------------------------
@@ -86,6 +94,78 @@ def risk_masks_from_labels(label_map: np.ndarray, id2label: dict) -> dict:
         "structural": tiers == 0,
         "object": tiers == 1,
         "critical": tiers == 2,
+    }
+
+
+def generation_masks(
+    provenance: np.ndarray,
+    structural_mask: np.ndarray,
+    critical_mask: np.ndarray | None = None,
+) -> dict:
+    """Return LOCKED / GENERATABLE / ABSENT masks for completion.
+
+    OBSERVED and RECONSTRUCTED evidence is always locked. Critical regions
+    are also locked even when unsupported, so a completion routine can never
+    paint over identity-/meaning-critical unknowns. Only currently ABSENT
+    structural texels are generatable; INFERRED texels already carry stronger
+    provenance than IMAGINED and therefore remain unchanged.
+    """
+    if provenance.shape != structural_mask.shape:
+        raise ValueError("provenance and structural_mask shapes differ")
+    if critical_mask is None:
+        critical_mask = np.zeros_like(structural_mask, dtype=bool)
+    if provenance.shape != critical_mask.shape:
+        raise ValueError("provenance and critical_mask shapes differ")
+
+    locked = np.isin(provenance, [OBSERVED, RECONSTRUCTED]) | critical_mask
+    generatable = (provenance == ABSENT) & structural_mask & ~locked
+    absent = ~(locked | generatable)
+    return {"locked": locked, "generatable": generatable, "absent": absent}
+
+
+def apply_provenance_priority(
+    base_color_bgr: np.ndarray,
+    base_provenance: np.ndarray,
+    candidate_color_bgr: np.ndarray,
+    candidate_provenance: np.ndarray,
+    locked_mask: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Composite candidate pixels without lowering provenance priority.
+
+    The enforced order is OBSERVED > RECONSTRUCTED > INFERRED > IMAGINED >
+    ABSENT. A candidate pixel is accepted only when its priority is strictly
+    higher than the current pixel and the location is not locked.
+    """
+    if base_provenance.shape != candidate_provenance.shape:
+        raise ValueError("base and candidate provenance shapes differ")
+    if base_color_bgr.shape[:2] != base_provenance.shape:
+        raise ValueError("base color and provenance shapes differ")
+    if candidate_color_bgr.shape[:2] != candidate_provenance.shape:
+        raise ValueError("candidate color and provenance shapes differ")
+    if locked_mask is None:
+        locked_mask = np.zeros_like(base_provenance, dtype=bool)
+    if locked_mask.shape != base_provenance.shape:
+        raise ValueError("locked_mask and provenance shapes differ")
+
+    priority_lookup = np.zeros(max(PROVENANCE_PRIORITY) + 1, dtype=np.uint8)
+    for code, priority in PROVENANCE_PRIORITY.items():
+        priority_lookup[code] = priority
+    safe_base = np.clip(base_provenance, 0, len(priority_lookup) - 1)
+    safe_candidate = np.clip(candidate_provenance, 0, len(priority_lookup) - 1)
+    accepts = (priority_lookup[safe_candidate] > priority_lookup[safe_base]) & ~locked_mask
+
+    color = base_color_bgr.copy()
+    provenance_out = base_provenance.copy()
+    color[accepts] = candidate_color_bgr[accepts]
+    provenance_out[accepts] = candidate_provenance[accepts]
+    return color, provenance_out
+
+
+def provenance_percentages(provenance: np.ndarray) -> dict:
+    total = max(int(provenance.size), 1)
+    return {
+        EVIDENCE_CLASS_NAMES[code].lower() + "Percent": float((provenance == code).sum() / total * 100)
+        for code in (OBSERVED, RECONSTRUCTED, INFERRED, IMAGINED, ABSENT)
     }
 
 

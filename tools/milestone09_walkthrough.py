@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Milestone 0.9 evidence-first 3D room-shell walkthrough builder.
+"""Milestone 1.0 evidence-first Remember/Imagine room-shell builder.
 
 This is a small, offline companion tool with no WebGL/Three.js dependency.
 It consumes an already-validated dense point cloud (PLY + MVS visibility
@@ -14,13 +14,16 @@ sidecar) and camera poses, then:
      candidate floor/ceiling/left/right/front/back face of a coarse box
      shell (`classify_face`), reusing the SAME plane-detection code path
      validated in Milestones 0.3/0.8 rather than re-deriving geometry here.
-  4. Builds a real evidence-splat texture card for every face that has a
+  4. Builds a real evidence-splat texture card in canonical room-face/atlas
+     space for every face that has a
      matching recovered plane (`splat_atlas`) -- OBSERVED/RECONSTRUCTED
      pixels come directly from real per-point colour; unsupported,
      non-critical gaps are bounded-inferred exactly as Doctrine v2 requires
      (`evidence_doctrine.bounded_inference_fill`). Faces with NO recovered
-     plane are rendered as an explicit, honest "no plane evidence
-     recovered" placeholder -- never a fabricated wall.
+     plane are completed first by the local deterministic Imagine fallback:
+     a generic structural atlas card marked 100% IMAGINED, visible only when
+     the user turns on Imagine. This is not frame-by-frame generation and is
+     not represented as evidence.
   5. Clusters the residual (non-planar) points left over after plane
      removal into candidate furniture/object volumes
      (`cluster_residual_points`) and places each as a flat, explicitly
@@ -30,8 +33,9 @@ sidecar) and camera poses, then:
      (`write_prototype`/`SHELL_TEMPLATE`) using pure CSS 3D transforms
      (perspective + preserve-3d + per-face transforms) -- no canvas/WebGL,
      no Three.js -- with pointer-drag look + WASD/arrow-key camera
-     translation clamped to the recovered envelope, and a founder/debug
-     provenance toggle that swaps every face and object card's texture.
+     translation clamped to the recovered envelope, a Remember/Imagine
+     toggle, and a debug provenance view that swaps every face and object
+     card's texture.
 
 ## Orientation limitation (explicitly documented, not hidden)
 
@@ -62,14 +66,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
+import time
 from pathlib import Path
 
-import cv2
 import numpy as np
+import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from evidence_doctrine import ABSENT, INFERRED, OBSERVED, RECONSTRUCTED, bounded_inference_fill
+from evidence_doctrine import (
+    ABSENT,
+    IMAGINED,
+    INFERRED,
+    OBSERVED,
+    RECONSTRUCTED,
+    apply_provenance_priority,
+    bounded_inference_fill,
+    generation_masks,
+    provenance_percentages,
+)
 from export_dense_evidence import read_ply, read_visibility
 from representation_spike import detect_planes, parse_views
 from semantic_plane_spike import fit_plane
@@ -82,6 +98,7 @@ FACE_AXIS = {"left": (0, -1), "right": (0, 1), "floor": (1, -1), "ceiling": (1, 
              "back": (2, -1), "front": (2, 1)}
 MIN_PLANE_POINTS_FOR_FACE = 150
 MIN_RESIDUAL_CLUSTER_POINTS = 40
+MAX_GENERATED_OBJECT_GAPS = 2
 
 
 def canonical_orientation(points: np.ndarray, camera_centers: np.ndarray) -> dict:
@@ -162,14 +179,141 @@ def splat_atlas(points: np.ndarray, colors: np.ndarray, supports: list, width: i
     provenance[observed & (support_max >= 2)] = RECONSTRUCTED
     critical = np.zeros_like(observed)  # no per-view semantic risk mask available from a point-only PLY input.
     filled, delta = bounded_inference_fill(atlas, observed, critical, max_distance_px=max(width, height) * 0.05)
-    provenance[delta == INFERRED] = INFERRED
+    candidate_provenance = provenance.copy()
+    candidate_provenance[delta == INFERRED] = INFERRED
+    filled, provenance = apply_provenance_priority(
+        atlas,
+        provenance,
+        filled,
+        candidate_provenance,
+        locked_mask=np.isin(provenance, [OBSERVED, RECONSTRUCTED]),
+    )
     info = {
         "widthPx": width, "heightPx": height,
         "observedOrReconstructedPercent": float(np.isin(provenance, [OBSERVED, RECONSTRUCTED]).mean() * 100),
-        "inferredPercent": float((provenance == INFERRED).mean() * 100),
-        "absentPercent": float((provenance == ABSENT).mean() * 100),
+        **provenance_percentages(provenance),
     }
     return filled, provenance, info
+
+
+def deterministic_structural_imagine(
+    width: int,
+    height: int,
+    seed_color_bgr: np.ndarray,
+    generatable_mask: np.ndarray,
+    locked_mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Local deterministic fallback for missing structural room faces.
+
+    This is deliberately generic and atlas-space only: a muted structural
+    gradient seeded from recovered face colours. It never reads source
+    photographs, never runs cloud inference, and never paints locked pixels.
+    """
+    width = max(1, int(width))
+    height = max(1, int(height))
+    if generatable_mask.shape != (height, width) or locked_mask.shape != (height, width):
+        raise ValueError("generation masks must match requested atlas size")
+
+    y, x = np.mgrid[0:height, 0:width]
+    gradient = ((x / max(width - 1, 1)) * 10 + (y / max(height - 1, 1)) * 7).astype(np.float32)
+    grain = (((x * 37 + y * 17) % 11) - 5).astype(np.float32)
+    base = np.clip(seed_color_bgr.astype(np.float32), 72, 190)
+    image = np.zeros((height, width, 3), dtype=np.uint8)
+    image[:, :, :] = np.clip(base + gradient[:, :, None] + grain[:, :, None], 0, 255).astype(np.uint8)
+    provenance = np.full((height, width), ABSENT, dtype=np.uint8)
+    provenance[generatable_mask & ~locked_mask] = IMAGINED
+    image[provenance != IMAGINED] = 0
+    return image, provenance
+
+
+def estimate_seed_color(faces: dict) -> np.ndarray:
+    samples = []
+    for face in faces.values():
+        image = face.get("image")
+        provenance = face.get("provenance")
+        if image is None or provenance is None:
+            continue
+        mask = np.isin(provenance, [OBSERVED, RECONSTRUCTED, INFERRED])
+        if mask.any():
+            samples.append(image[mask].mean(axis=0))
+    if not samples:
+        return np.array([132, 132, 132], dtype=np.float32)
+    return np.mean(np.asarray(samples), axis=0)
+
+
+def build_missing_face_imaginations(faces: dict, face_reports: dict, atlas_width: int = 480) -> dict:
+    """Generate missing room faces before any object-gap consideration."""
+    seed_color = estimate_seed_color(faces)
+    generated = {}
+    for key in FACE_KEYS:
+        if faces[key]["recovered"]:
+            continue
+        width = atlas_width
+        aspect = faces[key]["heightPx"] / max(faces[key]["widthPx"], 1)
+        height = max(1, min(2000, round(width * aspect)))
+        base_provenance = np.full((height, width), ABSENT, dtype=np.uint8)
+        structural = np.ones((height, width), dtype=bool)
+        critical = np.zeros((height, width), dtype=bool)
+        masks = generation_masks(base_provenance, structural, critical)
+        image, provenance = deterministic_structural_imagine(
+            width, height, seed_color, masks["generatable"], masks["locked"]
+        )
+        faces[key]["imaginedImage"] = image
+        faces[key]["imaginedProvenance"] = provenance
+        faces[key]["imagined"] = True
+        percentages = provenance_percentages(provenance)
+        generated[key] = {
+            "generated": True,
+            "method": "local deterministic structural Imagine fallback in canonical room-face atlas space",
+            "source": "seeded from aggregate recovered structural face colour; no source-frame generation, no cloud",
+            "lockedPixels": int(masks["locked"].sum()),
+            "generatablePixels": int(masks["generatable"].sum()),
+            "absentPixels": int(masks["absent"].sum()),
+            **percentages,
+        }
+        face_reports[key]["imagined"] = generated[key]
+    return generated
+
+
+def aggregate_face_provenance(faces: dict) -> dict:
+    counts = {OBSERVED: 0, RECONSTRUCTED: 0, INFERRED: 0, IMAGINED: 0, ABSENT: 0}
+    total = 0
+    for face in faces.values():
+        provenance = face.get("provenance")
+        if provenance is None:
+            provenance = face.get("imaginedProvenance")
+        if provenance is None:
+            continue
+        total += int(provenance.size)
+        for code in counts:
+            counts[code] += int((provenance == code).sum())
+    total = max(total, 1)
+    return {
+        "observedPercent": counts[OBSERVED] / total * 100,
+        "reconstructedPercent": counts[RECONSTRUCTED] / total * 100,
+        "inferredPercent": counts[INFERRED] / total * 100,
+        "imaginedPercent": counts[IMAGINED] / total * 100,
+        "absentPercent": counts[ABSENT] / total * 100,
+        "totalAtlasPixels": total,
+    }
+
+
+def measure_vram_used_mb() -> int | None:
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=4,
+        )
+    except Exception:
+        return None
+    first = result.stdout.strip().splitlines()[0].strip()
+    try:
+        return int(first)
+    except ValueError:
+        return None
 
 
 def classify_face(plane_normal_world: np.ndarray, plane_points: np.ndarray, orientation: dict) -> str:
@@ -283,17 +427,17 @@ def build_object_cards(residual: dict, orientation: dict, envelope: dict, max_sp
     return cards, rejected
 
 
-def write_face_images(output: Path, key: str, image: np.ndarray | None, provenance: np.ndarray | None) -> None:
+def write_face_images(output: Path, key: str, image: np.ndarray | None, provenance: np.ndarray | None, prefix: str = "face") -> None:
     if image is None:
         return
-    cv2.imwrite(str(output / f"face-{key}-founder.png"), image)
-    palette = np.array([[24, 24, 24], [238, 238, 238], [220, 190, 120], [150, 105, 195]], np.uint8)
-    cv2.imwrite(str(output / f"face-{key}-debug.png"), palette[np.minimum(provenance, 3)])
+    cv2.imwrite(str(output / f"{prefix}-{key}-founder.png"), image)
+    palette = np.array([[24, 24, 24], [238, 238, 238], [220, 190, 120], [150, 105, 195], [90, 165, 255]], np.uint8)
+    cv2.imwrite(str(output / f"{prefix}-{key}-debug.png"), palette[np.minimum(provenance, 4)])
 
 
 SHELL_TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Remember -- Milestone 0.9 3D room-shell walkthrough (private)</title>
+<title>Remember -- Milestone 1.0 Remember/Imagine room-shell walkthrough (private)</title>
 <style>
   html,body{margin:0;height:100%;background:#0a0a0d;overflow:hidden;font-family:system-ui,sans-serif;color:#eee}
   #scene{position:absolute;inset:0;perspective:1400px;perspective-origin:50% 50%}
@@ -303,6 +447,7 @@ SHELL_TEMPLATE = """<!doctype html>
         width:var(--w);height:var(--h);opacity:0.98}
   .face.unrecovered{background:repeating-linear-gradient(45deg,rgba(255,255,255,0.05) 0 10px,rgba(255,255,255,0.0) 10px 20px);
         border:1px dashed rgba(255,120,120,0.55)}
+  .face.imagined{border:1px solid rgba(90,165,255,0.75);filter:saturate(.65);opacity:.72}
   .face .label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
         font-size:12px;color:rgba(255,170,170,0.85);text-align:center;padding:10px;pointer-events:none}
   .object{position:absolute;transform-style:preserve-3d;border:1px solid rgba(255,255,255,0.35);
@@ -316,12 +461,13 @@ SHELL_TEMPLATE = """<!doctype html>
 </style></head>
 <body>
 <div id="hud">
-  <button id="toggle">Switch to debug provenance view</button>
+  <button id="modeToggle">Remember view</button>
+  <button id="debugToggle">Debug provenance off</button>
   <div id="caption" style="margin-top:8px;opacity:.85">
     Drag to look around. WASD / arrow keys to move (clamped to the recovered envelope).
-    Dashed red panels are faces with NO recovered structural plane -- shown honestly empty,
-    never fabricated. Blue boxes are residual-point evidence volumes (furniture-scale, position/size/colour
-    only, no shape completion).
+    Remember shows only OBSERVED/RECONSTRUCTED/INFERRED evidence. Imagine adds generic local structural
+    room-face completions marked IMAGINED; ambiguous and critical unknowns remain absent. Blue boxes are
+    residual-point evidence volumes (furniture-scale, position/size/colour only, no shape completion).
   </div>
 </div>
 <div id="metrics"></div>
@@ -331,21 +477,26 @@ SHELL_TEMPLATE = """<!doctype html>
 const DATA = __DATA_JSON__;
 const world = document.getElementById('world');
 let debugMode = false;
+let imagineMode = false;
 
 function makeFace(face) {
   const el = document.createElement('div');
-  el.className = 'face' + (face.recovered ? '' : ' unrecovered');
+  const visibleImagine = imagineMode && face.imagined;
+  el.className = 'face' + (face.recovered ? '' : ' unrecovered') + (visibleImagine ? ' imagined' : '');
   el.style.setProperty('--w', face.widthPx + 'px');
   el.style.setProperty('--h', face.heightPx + 'px');
   el.style.transform = face.transform;
-  if (face.recovered) {
-    el.style.backgroundImage = 'url(' + face.founderImage + ')';
+  if (face.recovered || visibleImagine || (debugMode && face.debugImage)) {
+    el.style.backgroundImage = 'url(' + (debugMode ? face.debugImage : (visibleImagine ? face.imagineImage : face.founderImage)) + ')';
     el.dataset.founder = face.founderImage;
+    el.dataset.imagine = face.imagineImage || face.founderImage;
     el.dataset.debug = face.debugImage;
   } else {
     const label = document.createElement('div');
     label.className = 'label';
-    label.textContent = 'NO PLANE EVIDENCE RECOVERED (' + face.key + ')';
+    label.textContent = face.imagined
+      ? 'ABSENT IN REMEMBER / IMAGINED STRUCTURAL FACE AVAILABLE (' + face.key + ')'
+      : 'NO PLANE EVIDENCE RECOVERED (' + face.key + ')';
     el.appendChild(label);
   }
   world.appendChild(el);
@@ -369,13 +520,20 @@ function render() {
   DATA.faces.forEach(makeFace);
   DATA.objects.forEach(makeObject);
   if (debugMode) {
-    document.querySelectorAll('.face[data-founder]').forEach(el => { el.style.backgroundImage = 'url(' + el.dataset.debug + ')'; });
+    document.querySelectorAll('.face[data-founder]').forEach(el => {
+      el.style.backgroundImage = 'url(' + (debugMode ? el.dataset.debug : (imagineMode ? el.dataset.imagine : el.dataset.founder)) + ')';
+    });
   }
 }
 
-document.getElementById('toggle').addEventListener('click', () => {
+document.getElementById('modeToggle').addEventListener('click', () => {
+  imagineMode = !imagineMode;
+  document.getElementById('modeToggle').textContent = imagineMode ? 'Imagine view' : 'Remember view';
+  render();
+});
+document.getElementById('debugToggle').addEventListener('click', () => {
   debugMode = !debugMode;
-  document.getElementById('toggle').textContent = debugMode ? 'Switch to founder view' : 'Switch to debug provenance view';
+  document.getElementById('debugToggle').textContent = debugMode ? 'Debug provenance on' : 'Debug provenance off';
   render();
 });
 
@@ -434,6 +592,13 @@ def write_prototype(output: Path, faces: dict, objects: list[dict], metrics: dic
             write_face_images(output, key, face["image"], face["provenance"])
             entry["founderImage"] = f"face-{key}-founder.png"
             entry["debugImage"] = f"face-{key}-debug.png"
+        if face.get("imagined"):
+            write_face_images(output, key, face["imaginedImage"], face["imaginedProvenance"], prefix="face-imagined")
+            entry["imagined"] = True
+            entry["imagineImage"] = f"face-imagined-{key}-founder.png"
+            entry["debugImage"] = f"face-imagined-{key}-debug.png"
+        else:
+            entry["imagined"] = False
         js_faces.append(entry)
 
     js_objects = []
@@ -454,8 +619,8 @@ def write_prototype(output: Path, faces: dict, objects: list[dict], metrics: dic
 
     envelope_half_px = metrics["envelopeHalfPx"]
     metrics_summary = (
-        f"Milestone 0.9 shell -- faces with evidence: {metrics['shell']['facesWithEvidence']}/6 | "
-        f"object volumes: {len(objects)} | "
+        f"Milestone 1.0 -- Remember faces: {metrics['shell']['facesWithEvidence']}/6 | "
+        f"Imagine faces: {metrics['generation']['generatedFacesCount']} | object volumes: {len(objects)} | "
         f"orientation gravity-estimated: {metrics['orientation']['gravityEstimated']}"
     )
     data = {"faces": js_faces, "objects": js_objects, "envelopeHalfPx": envelope_half_px, "metricsSummary": metrics_summary}
@@ -538,12 +703,17 @@ def main() -> None:
         faces[key]["transform"] = face_transforms[key]
 
     planes, models, residual = detect_planes(args.ply, args.visibility, len(views), return_residual=True)
+    generation_start = time.perf_counter()
+    vram_before = measure_vram_used_mb()
     face_reports = assign_planes_to_faces(planes, models, orientation, faces)
+    generated_faces = build_missing_face_imaginations(faces, face_reports)
+    vram_after = measure_vram_used_mb()
+    generation_latency_ms = (time.perf_counter() - generation_start) * 1000
     object_cards, rejected_clusters = build_object_cards(residual, orientation, envelope)
 
     faces_with_evidence = sum(1 for report in face_reports.values() if report["recovered"])
     metrics = {
-        "milestone": "0.9",
+        "milestone": "1.0-founder-steering",
         "orientation": orientation,
         "envelope": envelope,
         "envelopeHalfPx": {"x": float(half_extent[0]), "y": float(half_extent[1]), "z": float(half_extent[2])},
@@ -553,6 +723,32 @@ def main() -> None:
             "facesWithEvidence": faces_with_evidence,
             "facesTotal": len(FACE_KEYS),
             "shellCompletenessPercent": faces_with_evidence / len(FACE_KEYS) * 100,
+            "faceProvenanceAggregate": aggregate_face_provenance(faces),
+        },
+        "generation": {
+            "selectedApproach": "deterministic local atlas-space structural Imagine fallback",
+            "whyNoDiffusionModel": "RTX 3070 CUDA is usable, but no local Diffusers install or cached generative model was available; "
+                                "Azure/cloud generation is intentionally not used.",
+            "pipelineSpace": "canonical room-face/atlas space, never per-source-frame generation",
+            "provenancePriority": "OBSERVED > RECONSTRUCTED > INFERRED > IMAGINED > ABSENT",
+            "generatedFacesCount": len(generated_faces),
+            "generatedFaces": generated_faces,
+            "generatedObjectGapsCount": 0,
+            "generatedObjectPolicy": f"Object gap completion disabled unless confidence is adequate; cap is {MAX_GENERATED_OBJECT_GAPS}, "
+                                     "and this point-only pipeline has no semantic object masks.",
+            "latencyMs": generation_latency_ms,
+            "vramBeforeMb": vram_before,
+            "vramAfterMb": vram_after,
+            "vramDeltaMb": None if vram_before is None or vram_after is None else max(0, vram_after - vram_before),
+        },
+        "spatialConsistency": {
+            "canonicalFaceSpace": True,
+            "sourceFrameGeneration": False,
+            "faceTransformsPreserved": all(bool(faces[key]["transform"]) for key in FACE_KEYS),
+            "generatedFacesUseExistingShellTransforms": all(
+                bool(faces[key]["transform"]) for key in generated_faces
+            ),
+            "walkBoundsPx": {"x": float(half_extent[0]), "y": float(half_extent[1]), "z": float(half_extent[2])},
         },
         "objectPlacement": {
             "status": "partial-evidence-only",
