@@ -35,6 +35,14 @@ The provenance classes are:
 
 Captured, reconstructed, and quality-gated interpolated evidence are allowed. Imagined content is not part of the evidence-backed experience. See [the representation spike](REPRESENTATION-SPIKE.md), [semantic-plane spike](SEMANTIC-PLANE-SPIKE.md), [photographic-coherence spike](WALL-COHERENCE-SPIKE.md), [radiance-field representation spike](RECONSTRUCTION-REPRESENTATION-SPIKE.md), [sparse-view regularization / support-gate spike](SPARSE-VIEW-SUPPORT-GATE-SPIKE.md), [hybrid supported spatial memory prototype](HYBRID-SPATIAL-MEMORY-SPIKE.md), and [spatial-continuity photo transitions](SPATIAL-TRANSITION-SPIKE.md) for the measured alternatives and stop/go decisions.
 
+Milestone 0.9 adds a private desktop-only walkthrough
+(`tools/milestone09_walkthrough.py`). It canonicalises orientation from
+recovered geometry, reports a percentile room envelope, and projects
+evidence-first texture cards. The founder and debug views share the same
+provenance array; critical masks are passed to Doctrine v2 and cannot be
+inferred over. This is a prototype review surface, not an Android/AR scene
+format, and its outputs remain private.
+
 Milestone 0.8 introduces **Representation Doctrine v2** (`tools/evidence_doctrine.py`), which amends this for low-risk structural surfaces only: OBSERVED and RECONSTRUCTED pixels are unchanged, but a bounded, non-generative INFERRED tier is now permitted for conservative structural continuation (wall/floor/ceiling gaps), strictly gated so it can never touch identity-critical content (faces, artwork, screens, signage, mirrors, personal objects), which stays absent rather than completed. IMAGINED remains permanently prohibited. See [evidence-maximizing structural completion](EVIDENCE-MAXIMIZING-RECONSTRUCTION-SPIKE.md) for the implementation, the critical-content guardrail test, and measured results.
 
 ## Evidence contract

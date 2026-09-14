@@ -25,8 +25,14 @@ The project uses Kotlin and AndroidX. It targets Android 15 (API 35) and support
 - [Architecture](docs/ARCHITECTURE.md)
 - [Privacy](docs/PRIVACY.md)
 - [Milestone 0 results](docs/MILESTONE-0-RESULTS.md)
+- [Milestone 0.9 founder steering report](docs/MILESTONE-0.9-FOUNDER-REPORT.md)
 - [Development guide](docs/DEVELOPMENT.md)
 - [Contributing](CONTRIBUTING.md)
+
+The Milestone 0.9 private desktop walkthrough is built with
+`tools/milestone09_walkthrough.py`. It emits only aggregate metrics and
+provenance-coded views in the requested output directory; private photos,
+poses, masks, and renders must remain outside the repository.
 
 ## Licensing
 
