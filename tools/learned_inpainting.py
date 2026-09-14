@@ -209,6 +209,8 @@ def run_learned_inpainting(
                     negative_prompt=DEFAULT_NEGATIVE_PROMPT,
                     image=Image.fromarray(resized_rgb),
                     mask_image=Image.fromarray(resized_mask),
+                    width=target_w,
+                    height=target_h,
                     num_inference_steps=config.steps,
                     guidance_scale=config.guidance_scale,
                     generator=generator,

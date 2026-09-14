@@ -256,6 +256,7 @@ def build_missing_face_imaginations(
     atlas_width: int = 480,
     engine: str = "auto",
     learned_config: LearnedInpaintingConfig | None = None,
+    max_missing_faces: int | None = None,
 ) -> tuple[dict, dict]:
     """Generate missing room faces before any object-gap consideration.
 
@@ -282,6 +283,8 @@ def build_missing_face_imaginations(
 
     missing = [key for key in FACE_KEYS if not faces[key]["recovered"]]
     missing.sort(key=lambda k: float(faces[k]["widthPx"]) * float(faces[k]["heightPx"]), reverse=True)
+    if max_missing_faces is not None:
+        missing = missing[:max_missing_faces]
     use_learned = engine in {"auto", "learned"}
     learned_enabled_for_remaining = False
 
@@ -784,7 +787,15 @@ def main() -> None:
     parser.add_argument("--learned-steps", type=int, default=24)
     parser.add_argument("--learned-guidance", type=float, default=6.0)
     parser.add_argument("--learned-max-resolution", type=int, default=512)
+    parser.add_argument(
+        "--imagine-max-faces",
+        type=int,
+        default=None,
+        help="Limit canonical missing-face generation for a staged private review.",
+    )
     args = parser.parse_args()
+    if args.imagine_max_faces is not None and args.imagine_max_faces < 1:
+        parser.error("--imagine-max-faces must be at least 1")
 
     vertices = read_ply(args.ply)
     points = np.asarray([v[:3] for v in vertices], dtype=np.float64)
@@ -838,6 +849,7 @@ def main() -> None:
         face_reports,
         engine=args.imagine_engine,
         learned_config=learned_config,
+        max_missing_faces=args.imagine_max_faces,
     )
     vram_after = measure_vram_used_mb()
     generation_latency_ms = (time.perf_counter() - generation_start) * 1000

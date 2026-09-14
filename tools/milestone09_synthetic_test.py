@@ -118,7 +118,7 @@ def main() -> None:
     faces["front"]["image"] = wall_image.copy()
     faces["front"]["provenance"] = wall_provenance.copy()
     reports = {key: {"recovered": faces[key]["recovered"]} for key in faces}
-    generated_faces = build_missing_face_imaginations(faces, reports, atlas_width=64)
+    generated_faces, _ = build_missing_face_imaginations(faces, reports, atlas_width=64)
     assert len(generated_faces) == 5
     assert np.array_equal(faces["front"]["image"], wall_image)
     assert np.array_equal(faces["front"]["provenance"], wall_provenance)
@@ -128,6 +128,22 @@ def main() -> None:
         "observedPercent", "reconstructedPercent", "inferredPercent", "imaginedPercent", "absentPercent"
     )) - 100) < 1e-6
     assert all(faces[key]["transform"].startswith("synthetic-") for key in faces)
+
+    staged_faces = {
+        key: {"recovered": False, "widthPx": 160.0, "heightPx": 100.0, "transform": f"staged-{key}",
+              "image": None, "provenance": None}
+        for key in ("left", "right", "floor", "ceiling", "back", "front")
+    }
+    staged_reports = {key: {"recovered": False} for key in staged_faces}
+    staged_generated, _ = build_missing_face_imaginations(
+        staged_faces,
+        staged_reports,
+        atlas_width=64,
+        engine="deterministic",
+        max_missing_faces=1,
+    )
+    assert len(staged_generated) == 1
+    assert sum("imaginedImage" in face for face in staged_faces.values()) == 1
 
     result = {
         "test": "milestone09_synthetic",
