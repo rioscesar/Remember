@@ -132,16 +132,29 @@ def detect_planes(
     ply: Path,
     visibility: Path,
     registered_views: int,
+    return_residual: bool = False,
 ) -> tuple[list[dict], list[dict]]:
+    """RANSAC-fit up to 5 dominant planes from >=3-view points.
+
+    Additive, backward-compatible: existing callers that unpack
+    ``planes, models = detect_planes(...)`` are unaffected. Each model dict
+    now also carries the matching per-point ``colors`` (uint8 RGB, same
+    order as its ``points``) so downstream callers (e.g. the Milestone 0.9
+    walkthrough) can build evidence-textured cards without re-reading the
+    PLY. Passing ``return_residual=True`` additionally returns a third
+    element: the points/colors/supports never claimed by any fitted plane
+    (candidate furniture/object evidence).
+    """
     vertices = read_ply(ply)
     visible_from = read_visibility(visibility, registered_views)
     selected = [
-        (vertex[:3], views)
+        (vertex[:3], vertex[3:6], views)
         for vertex, views in zip(vertices, visible_from)
         if len(views) >= 3
     ]
     points = np.asarray([item[0] for item in selected], dtype=np.float64)
-    supports = [item[1] for item in selected]
+    point_colors = np.asarray([item[1] for item in selected], dtype=np.uint8)
+    supports = [item[2] for item in selected]
     spans = np.percentile(points, 95, axis=0) - np.percentile(points, 5, axis=0)
     threshold = float(np.linalg.norm(spans) * 0.005)
     remaining = np.arange(len(points))
@@ -186,9 +199,17 @@ def detect_planes(
         })
         models.append({
             "points": inlier_points,
+            "colors": point_colors[global_inliers],
             "supports": [supports[index] for index in global_inliers],
         })
         remaining = np.delete(remaining, best)
+    if return_residual:
+        residual = {
+            "points": points[remaining],
+            "colors": point_colors[remaining],
+            "supports": [supports[index] for index in remaining],
+        }
+        return planes, models, residual
     return planes, models
 
 

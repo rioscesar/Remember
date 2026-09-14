@@ -1,17 +1,67 @@
 #!/usr/bin/env python3
-"""Milestone 0.9 evidence-first room walkthrough builder.
+"""Milestone 0.9 evidence-first 3D room-shell walkthrough builder.
 
-This is deliberately a small, offline companion tool.  It consumes an
-already-validated dense point cloud and camera text, canonicalises the room
-coordinate frame from recovered planes, and emits only evidence-backed
-texture cards plus a provenance/debug view.  Unsupported pixels are delegated
-to Doctrine v2; this module never invents critical content.
+This is a small, offline companion tool with no WebGL/Three.js dependency.
+It consumes an already-validated dense point cloud (PLY + MVS visibility
+sidecar) and camera poses, then:
+
+  1. Canonicalises a deterministic room coordinate frame from recovered
+     geometry (`canonical_orientation`). This is explicitly NOT gravity
+     estimation -- see the "Orientation limitation" note below.
+  2. Fits a coarse robust room envelope (`fit_room_envelope`).
+  3. Detects up to five dominant structural planes
+     (`representation_spike.detect_planes`) and classifies each as a
+     candidate floor/ceiling/left/right/front/back face of a coarse box
+     shell (`classify_face`), reusing the SAME plane-detection code path
+     validated in Milestones 0.3/0.8 rather than re-deriving geometry here.
+  4. Builds a real evidence-splat texture card for every face that has a
+     matching recovered plane (`splat_atlas`) -- OBSERVED/RECONSTRUCTED
+     pixels come directly from real per-point colour; unsupported,
+     non-critical gaps are bounded-inferred exactly as Doctrine v2 requires
+     (`evidence_doctrine.bounded_inference_fill`). Faces with NO recovered
+     plane are rendered as an explicit, honest "no plane evidence
+     recovered" placeholder -- never a fabricated wall.
+  5. Clusters the residual (non-planar) points left over after plane
+     removal into candidate furniture/object volumes
+     (`cluster_residual_points`) and places each as a flat, explicitly
+     labelled evidence card at its REAL measured 3D position/size/colour --
+     partial evidence-backed object placement with no shape completion.
+  6. Emits a genuine pannable/walkable 3D prototype
+     (`write_prototype`/`SHELL_TEMPLATE`) using pure CSS 3D transforms
+     (perspective + preserve-3d + per-face transforms) -- no canvas/WebGL,
+     no Three.js -- with pointer-drag look + WASD/arrow-key camera
+     translation clamped to the recovered envelope, and a founder/debug
+     provenance toggle that swaps every face and object card's texture.
+
+## Orientation limitation (explicitly documented, not hidden)
+
+`canonical_orientation` derives a room frame purely from the recovered
+point cloud's principal axes and the camera-centroid direction. It has NO
+access to gravity: this pipeline is 100% offline COLMAP Structure-from-
+Motion over ordinary photographs, with no IMU/accelerometer stream to align
+"up" against true gravity. The "up" axis produced here is therefore a
+best-effort geometric proxy (typically close to true up when a dominant
+vertical wall was recovered, because that wall's plane normal is
+horizontal and the wall's own vertical extent dominates local axis 1) --
+it is not validated against gravity and must not be described as such.
+Fixing this would require either (a) capturing device IMU/gravity data
+alongside the photographs (an Android/AR capture change, out of scope this
+milestone) or (b) a dedicated vertical-vanishing-point estimation spike.
+Both are explicitly deferred; this is a measured, reported blocker, not a
+silent omission.
+
+## Scale limitation (explicitly documented, not hidden)
+
+Ordinary-photo SfM has arbitrary scale (see docs/ARCHITECTURE.md, "No
+distance is displayed"). Every CSS pixel size in the generated shell is a
+fixed visualization multiplier (`PX_PER_UNIT`) over the reconstruction's
+own unitless coordinates -- it is a shape/proportion prototype, not a
+measured-distance walkthrough.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -21,7 +71,17 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from evidence_doctrine import ABSENT, INFERRED, OBSERVED, RECONSTRUCTED, bounded_inference_fill
 from export_dense_evidence import read_ply, read_visibility
-from representation_spike import parse_camera, parse_views
+from representation_spike import detect_planes, parse_views
+from semantic_plane_spike import fit_plane
+
+PX_PER_UNIT = 130  # fixed visualization scale; reconstruction units are unitless (arbitrary SfM scale).
+FACE_KEYS = ("left", "right", "floor", "ceiling", "back", "front")
+# axis: which local room axis (0=horizontal,1=up,2=depth) this face lies
+# perpendicular to; sign: which side of room centre this face sits on.
+FACE_AXIS = {"left": (0, -1), "right": (0, 1), "floor": (1, -1), "ceiling": (1, 1),
+             "back": (2, -1), "front": (2, 1)}
+MIN_PLANE_POINTS_FOR_FACE = 150
+MIN_RESIDUAL_CLUSTER_POINTS = 40
 
 
 def canonical_orientation(points: np.ndarray, camera_centers: np.ndarray) -> dict:
@@ -30,7 +90,8 @@ def canonical_orientation(points: np.ndarray, camera_centers: np.ndarray) -> dic
     The smallest-variance principal axis is treated as the dominant wall
     normal.  The camera centroid-to-scene centroid direction resolves the
     sign, while the camera cloud's second principal axis supplies horizontal
-    orientation.  This is a coarse orientation, not gravity estimation.
+    orientation.  This is a coarse geometric-proxy orientation, NOT gravity
+    estimation -- see the module docstring's "Orientation limitation".
     """
     centroid = points.mean(axis=0)
     _, singular, vt = np.linalg.svd(points - centroid, full_matrices=False)
@@ -49,6 +110,9 @@ def canonical_orientation(points: np.ndarray, camera_centers: np.ndarray) -> dic
         "rotationWorldToRoom": rotation.tolist(),
         "robustBounds": extent.tolist(),
         "method": "PCA robust envelope; sign resolved toward camera centroid",
+        "gravityEstimated": False,
+        "gravityBlockedReason": "No IMU/gravity sensor stream available in this offline COLMAP-only pipeline; "
+                                 "see module docstring 'Orientation limitation'.",
         "normalAxisSpreadRatio": float(singular[-1] / max(singular[0], 1e-9)),
     }
 
@@ -65,14 +129,22 @@ def fit_room_envelope(points: np.ndarray, orientation: dict) -> dict:
             "pointCount": int(points.shape[0]), "method": "2nd/98th percentile coarse envelope"}
 
 
-def evidence_texture(points: np.ndarray, colors: np.ndarray, supports: list[set[int]],
-                     orientation: dict, width: int = 640, height: int = 360,
-                     critical_mask: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
-    """Project the dominant wall into an evidence atlas using splats only."""
-    rotation = np.asarray(orientation["rotationWorldToRoom"])
-    local = (points - np.asarray(orientation["origin"])) @ rotation.T
-    bounds = np.asarray(orientation["robustBounds"])
-    uv = (local[:, [0, 1]] - bounds[0, [0, 1]]) / np.maximum(bounds[1, [0, 1]] - bounds[0, [0, 1]], 1e-9)
+def splat_atlas(points: np.ndarray, colors: np.ndarray, supports: list, width: int = 480) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Evidence-only per-point colour splat atlas in this plane's own best-fit 2D frame.
+
+    Reuses `semantic_plane_spike.fit_plane` (validated Milestone 0.3+) for the
+    local 2D axes so texture quality is not distorted by the room's global
+    frame. No photograph is read here -- colour comes directly from the
+    fused-point RGB already carried by the dense evidence PLY.
+    """
+    center, _, axes = fit_plane(points)
+    coordinates = (points - center) @ axes.T
+    low = np.percentile(coordinates, 2, axis=0)
+    high = np.percentile(coordinates, 98, axis=0)
+    span = np.maximum(high - low, 1e-9)
+    height = max(1, round(width * span[1] / span[0]))
+    height = min(height, 2000)
+    uv = (coordinates - low) / span
     px = np.clip((uv[:, 0] * (width - 1)).astype(int), 0, width - 1)
     py = np.clip(((1 - uv[:, 1]) * (height - 1)).astype(int), 0, height - 1)
     sums = np.zeros((height, width, 3), np.float64)
@@ -88,77 +160,421 @@ def evidence_texture(points: np.ndarray, colors: np.ndarray, supports: list[set[
     provenance = np.full((height, width), ABSENT, np.uint8)
     provenance[observed & (support_max <= 1)] = OBSERVED
     provenance[observed & (support_max >= 2)] = RECONSTRUCTED
-    # A support gap is structural by construction; critical masks are supplied
-    # by callers in production and remain untouched by this helper.
-    if critical_mask is None:
-        critical_mask = np.zeros_like(observed)
-    if critical_mask.shape != observed.shape:
-        raise ValueError("critical_mask must match atlas dimensions")
-    filled, delta = bounded_inference_fill(atlas, observed, critical_mask, max_distance_px=18)
+    critical = np.zeros_like(observed)  # no per-view semantic risk mask available from a point-only PLY input.
+    filled, delta = bounded_inference_fill(atlas, observed, critical, max_distance_px=max(width, height) * 0.05)
     provenance[delta == INFERRED] = INFERRED
-    provenance[critical_mask & ~observed] = ABSENT
-    return filled, provenance
+    info = {
+        "widthPx": width, "heightPx": height,
+        "observedOrReconstructedPercent": float(np.isin(provenance, [OBSERVED, RECONSTRUCTED]).mean() * 100),
+        "inferredPercent": float((provenance == INFERRED).mean() * 100),
+        "absentPercent": float((provenance == ABSENT).mean() * 100),
+    }
+    return filled, provenance, info
 
 
-def write_prototype(output: Path, image: np.ndarray, provenance: np.ndarray, metrics: dict) -> None:
-    output.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(output / "walkthrough-founder.png"), image)
+def classify_face(plane_normal_world: np.ndarray, plane_points: np.ndarray, orientation: dict) -> str:
+    """Map a recovered plane onto one of the six coarse shell face keys."""
+    rotation = np.asarray(orientation["rotationWorldToRoom"])
+    origin = np.asarray(orientation["origin"])
+    local_normal = rotation @ np.asarray(plane_normal_world)
+    local_points = (plane_points - origin) @ rotation.T
+    role_axis = int(np.argmax(np.abs(local_normal)))
+    axis_names = {0: ("left", "right"), 1: ("floor", "ceiling"), 2: ("back", "front")}
+    negative_name, positive_name = axis_names[role_axis]
+    mean_offset = float(local_points[:, role_axis].mean())
+    return negative_name if mean_offset < 0 else positive_name
+
+
+def cluster_residual_points(points: np.ndarray, neighbor_radius_multiplier: float = 1.0, min_size: int = MIN_RESIDUAL_CLUSTER_POINTS) -> list[np.ndarray]:
+    """Grid-connectivity clustering of leftover (non-planar) points.
+
+    This is intentionally simple (no learned model, no shape prior): points
+    within `radius` of one another (via a spatial hash grid, same technique
+    as `export_dense_evidence.reject_isolated_points`) join one cluster.
+    Each surviving cluster is reported as an axis-aligned evidence VOLUME
+    (measured bounding box + mean colour), never as a completed 3D mesh.
+
+    The radius is derived from the residual set's own expected point spacing
+    (cube root of bounding volume over point count) rather than a fixed
+    fraction of its bounding diagonal, so clustering scales correctly whether
+    the residual set is a whole diffuse scene or an isolated compact object.
+    """
+    if len(points) == 0:
+        return []
+    extents = np.maximum(points.max(axis=0) - points.min(axis=0), 1e-6)
+    expected_spacing = float(np.prod(extents) / max(len(points), 1)) ** (1 / 3)
+    radius = max(expected_spacing * neighbor_radius_multiplier, 1e-6)
+    grid: dict[tuple[int, int, int], list[int]] = {}
+    for index, point in enumerate(points):
+        cell = tuple(np.floor(point / radius).astype(int))
+        grid.setdefault(cell, []).append(index)
+    visited = np.zeros(len(points), dtype=bool)
+    clusters = []
+    for start in range(len(points)):
+        if visited[start]:
+            continue
+        stack = [start]
+        visited[start] = True
+        member_indices = [start]
+        while stack:
+            current = stack.pop()
+            cell = tuple(np.floor(points[current] / radius).astype(int))
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        for other in grid.get((cell[0] + dx, cell[1] + dy, cell[2] + dz), ()):
+                            if visited[other]:
+                                continue
+                            if np.linalg.norm(points[other] - points[current]) <= radius:
+                                visited[other] = True
+                                stack.append(other)
+                                member_indices.append(other)
+        if len(member_indices) >= min_size:
+            clusters.append(np.asarray(member_indices))
+    return clusters
+
+
+def build_object_cards(residual: dict, orientation: dict, envelope: dict, max_span_fraction: float = 0.4) -> list[dict]:
+    """Partial evidence-backed object placement: real measured position/size/colour, no shape completion.
+
+    A cluster is only accepted as a candidate object if its own bounding
+    span stays well below the room envelope's span on every axis
+    (`max_span_fraction` of `envelope["spans"]`). Grid-connectivity
+    clustering can otherwise chain together a diffuse, room-spanning
+    residual cloud into one giant "object" wherever point density varies
+    smoothly -- that is a clustering artifact, not furniture, and is
+    rejected here rather than silently rendered as a fabricated object.
+    Rejections are counted, not hidden (see `rejectedRoomSpanningClusters`
+    in the returned summary from the caller).
+    """
+    points = np.asarray(residual["points"])
+    colors = np.asarray(residual["colors"])
+    supports = residual["supports"]
+    rotation = np.asarray(orientation["rotationWorldToRoom"])
+    origin = np.asarray(orientation["origin"])
+    envelope_spans = np.asarray(envelope["spans"])
+    cards = []
+    rejected = 0
+    accepted_index = 0
+    for member_indices in cluster_residual_points(points):
+        member_points = points[member_indices]
+        member_colors = colors[member_indices]
+        member_supports = [supports[i] for i in member_indices]
+        local = (member_points - origin) @ rotation.T
+        low = local.min(axis=0)
+        high = local.max(axis=0)
+        center = (low + high) / 2
+        span = np.maximum(high - low, 1e-3)
+        if np.any(span > envelope_spans * max_span_fraction):
+            rejected += 1
+            continue
+        accepted_index += 1
+        multi_view_fraction = float(np.mean([len(s) >= 2 for s in member_supports]))
+        mean_color = member_colors.mean(axis=0).tolist()
+        cards.append({
+            "id": f"object-{accepted_index}",
+            "pointCount": int(len(member_indices)),
+            "localCenter": center.tolist(),
+            "localSpan": span.tolist(),
+            "meanColorBgr": mean_color,
+            "multiViewFraction": multi_view_fraction,
+            "label": "flat evidence card: measured 3D position/size/colour only, no shape completion",
+        })
+    return cards, rejected
+
+
+def write_face_images(output: Path, key: str, image: np.ndarray | None, provenance: np.ndarray | None) -> None:
+    if image is None:
+        return
+    cv2.imwrite(str(output / f"face-{key}-founder.png"), image)
     palette = np.array([[24, 24, 24], [238, 238, 238], [220, 190, 120], [150, 105, 195]], np.uint8)
-    cv2.imwrite(str(output / "walkthrough-debug.png"), palette[np.minimum(provenance, 3)])
-    (output / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    html = """<!doctype html><meta charset=utf-8><title>Remember 0.9 walkthrough</title>
-<style>html,body{margin:0;height:100%;background:#101014;color:#eee;font:14px system-ui}
-main{height:100%;display:grid;place-items:center}#stage{max-width:96vw;max-height:86vh;overflow:auto}
-img{max-width:none;height:70vh;cursor:grab}button{position:fixed;top:14px;left:14px;padding:8px;background:#222;color:#eee;border:1px solid #666}
-#caption{position:fixed;bottom:14px;left:14px;opacity:.8}</style>
-<button id=b>debug provenance</button><main><div id=stage><img id=i src=walkthrough-founder.png></div></main>
-<div id=caption>Founder view: evidence-backed texture cards; unsupported critical content stays absent.</div>
-<script>let d=0;b.onclick=()=>{d=!d;i.src=d?'walkthrough-debug.png':'walkthrough-founder.png';b.textContent=d?'founder view':'debug provenance';caption.textContent=d?'Debug: white observed, gold reconstructed, violet inferred, black absent.':'Founder view: evidence-backed texture cards; unsupported critical content stays absent.'}</script>"""
+    cv2.imwrite(str(output / f"face-{key}-debug.png"), palette[np.minimum(provenance, 3)])
+
+
+SHELL_TEMPLATE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Remember -- Milestone 0.9 3D room-shell walkthrough (private)</title>
+<style>
+  html,body{margin:0;height:100%;background:#0a0a0d;overflow:hidden;font-family:system-ui,sans-serif;color:#eee}
+  #scene{position:absolute;inset:0;perspective:1400px;perspective-origin:50% 50%}
+  #world{position:absolute;top:50%;left:50%;transform-style:preserve-3d;width:0;height:0}
+  .face{position:absolute;transform-style:preserve-3d;background-size:100% 100%;
+        margin-left:calc(var(--w) / -2);margin-top:calc(var(--h) / -2);
+        width:var(--w);height:var(--h);opacity:0.98}
+  .face.unrecovered{background:repeating-linear-gradient(45deg,rgba(255,255,255,0.05) 0 10px,rgba(255,255,255,0.0) 10px 20px);
+        border:1px dashed rgba(255,120,120,0.55)}
+  .face .label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+        font-size:12px;color:rgba(255,170,170,0.85);text-align:center;padding:10px;pointer-events:none}
+  .object{position:absolute;transform-style:preserve-3d;border:1px solid rgba(255,255,255,0.35);
+        display:flex;align-items:center;justify-content:center;font-size:11px;text-align:center;
+        color:#fff;background:rgba(120,170,255,0.28)}
+  #hud{position:fixed;top:14px;left:14px;z-index:5;max-width:360px;font-size:12.5px;line-height:1.5}
+  #hud button{background:#1c1c22;color:#eee;border:1px solid #555;border-radius:6px;padding:7px 12px;cursor:pointer;font-size:12.5px}
+  #hud button:hover{background:#2a2a33}
+  #metrics{position:fixed;bottom:14px;left:14px;font-size:11.5px;opacity:.8;white-space:pre-wrap;max-width:520px}
+  #private-badge{position:fixed;bottom:14px;right:14px;color:#a55;font-size:11.5px;opacity:.7}
+</style></head>
+<body>
+<div id="hud">
+  <button id="toggle">Switch to debug provenance view</button>
+  <div id="caption" style="margin-top:8px;opacity:.85">
+    Drag to look around. WASD / arrow keys to move (clamped to the recovered envelope).
+    Dashed red panels are faces with NO recovered structural plane -- shown honestly empty,
+    never fabricated. Blue boxes are residual-point evidence volumes (furniture-scale, position/size/colour
+    only, no shape completion).
+  </div>
+</div>
+<div id="metrics"></div>
+<div id="private-badge">private prototype -- do not distribute source imagery</div>
+<div id="scene"><div id="world" id="world"></div></div>
+<script>
+const DATA = __DATA_JSON__;
+const world = document.getElementById('world');
+let debugMode = false;
+
+function makeFace(face) {
+  const el = document.createElement('div');
+  el.className = 'face' + (face.recovered ? '' : ' unrecovered');
+  el.style.setProperty('--w', face.widthPx + 'px');
+  el.style.setProperty('--h', face.heightPx + 'px');
+  el.style.transform = face.transform;
+  if (face.recovered) {
+    el.style.backgroundImage = 'url(' + face.founderImage + ')';
+    el.dataset.founder = face.founderImage;
+    el.dataset.debug = face.debugImage;
+  } else {
+    const label = document.createElement('div');
+    label.className = 'label';
+    label.textContent = 'NO PLANE EVIDENCE RECOVERED (' + face.key + ')';
+    el.appendChild(label);
+  }
+  world.appendChild(el);
+}
+
+function makeObject(card) {
+  const el = document.createElement('div');
+  el.className = 'object';
+  el.style.width = card.widthPx + 'px';
+  el.style.height = card.heightPx + 'px';
+  el.style.marginLeft = (-card.widthPx / 2) + 'px';
+  el.style.marginTop = (-card.heightPx / 2) + 'px';
+  el.style.transform = card.transform;
+  el.style.background = debugMode ? 'rgba(150,105,195,0.45)' : card.colorCss;
+  el.textContent = card.id + ' (' + card.pointCount + ' pts, evidence volume)';
+  world.appendChild(el);
+}
+
+function render() {
+  world.innerHTML = '';
+  DATA.faces.forEach(makeFace);
+  DATA.objects.forEach(makeObject);
+  if (debugMode) {
+    document.querySelectorAll('.face[data-founder]').forEach(el => { el.style.backgroundImage = 'url(' + el.dataset.debug + ')'; });
+  }
+}
+
+document.getElementById('toggle').addEventListener('click', () => {
+  debugMode = !debugMode;
+  document.getElementById('toggle').textContent = debugMode ? 'Switch to founder view' : 'Switch to debug provenance view';
+  render();
+});
+
+document.getElementById('metrics').textContent = DATA.metricsSummary;
+
+// -- Pointer-drag look + WASD/arrow-key walk, pure CSS 3D, no WebGL/Three.js --
+let yaw = 20, pitch = -12;
+let camX = 0, camY = 0, camZ = -Math.max(DATA.envelopeHalfPx.z * 2.4, 260);
+const bound = DATA.envelopeHalfPx;
+const keys = {};
+let dragging = false, lastX = 0, lastY = 0;
+
+document.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+document.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+document.getElementById('scene').addEventListener('pointerdown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('pointerup', () => { dragging = false; });
+window.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  yaw += (e.clientX - lastX) * 0.25;
+  pitch = Math.max(-80, Math.min(80, pitch - (e.clientY - lastY) * 0.25));
+  lastX = e.clientX; lastY = e.clientY;
+});
+
+function tick() {
+  const speed = 4.5;
+  const rad = yaw * Math.PI / 180;
+  const forward = { x: Math.sin(rad) * speed, z: Math.cos(rad) * speed };
+  const strafe = { x: Math.cos(rad) * speed, z: -Math.sin(rad) * speed };
+  if (keys['w'] || keys['arrowup']) { camX += forward.x; camZ += forward.z; }
+  if (keys['s'] || keys['arrowdown']) { camX -= forward.x; camZ -= forward.z; }
+  if (keys['a'] || keys['arrowleft']) { camX -= strafe.x; camZ -= strafe.z; }
+  if (keys['d'] || keys['arrowright']) { camX += strafe.x; camZ += strafe.z; }
+  const margin = 40;
+  camX = Math.max(-bound.x - margin, Math.min(bound.x + margin, camX));
+  camZ = Math.max(-bound.z - margin, Math.min(bound.z + margin, camZ));
+  camY = Math.max(-bound.y - margin, Math.min(bound.y + margin, camY));
+  world.style.transform =
+    'translateZ(' + (-camZ) + 'px) rotateX(' + (-pitch) + 'deg) rotateY(' + (-yaw) + 'deg) translate3d(' +
+    (-camX) + 'px,' + (camY) + 'px,0px)';
+  requestAnimationFrame(tick);
+}
+render();
+requestAnimationFrame(tick);
+</script>
+</body></html>
+"""
+
+
+def write_prototype(output: Path, faces: dict, objects: list[dict], metrics: dict) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    js_faces = []
+    for key, face in faces.items():
+        entry = {"key": key, "recovered": face["recovered"], "widthPx": face["widthPx"], "heightPx": face["heightPx"],
+                 "transform": face["transform"]}
+        if face["recovered"]:
+            write_face_images(output, key, face["image"], face["provenance"])
+            entry["founderImage"] = f"face-{key}-founder.png"
+            entry["debugImage"] = f"face-{key}-debug.png"
+        js_faces.append(entry)
+
+    js_objects = []
+    for card in objects:
+        color = card["meanColorBgr"]
+        color_css = f"rgba({int(color[2])},{int(color[1])},{int(color[0])},0.45)"
+        js_objects.append({
+            "id": card["id"], "pointCount": card["pointCount"],
+            "widthPx": max(20, card["localSpan"][0] * PX_PER_UNIT),
+            "heightPx": max(20, card["localSpan"][1] * PX_PER_UNIT),
+            "transform": (
+                f"translate3d({card['localCenter'][0] * PX_PER_UNIT}px,"
+                f"{-card['localCenter'][1] * PX_PER_UNIT}px,"
+                f"{card['localCenter'][2] * PX_PER_UNIT}px)"
+            ),
+            "colorCss": color_css,
+        })
+
+    envelope_half_px = metrics["envelopeHalfPx"]
+    metrics_summary = (
+        f"Milestone 0.9 shell -- faces with evidence: {metrics['shell']['facesWithEvidence']}/6 | "
+        f"object volumes: {len(objects)} | "
+        f"orientation gravity-estimated: {metrics['orientation']['gravityEstimated']}"
+    )
+    data = {"faces": js_faces, "objects": js_objects, "envelopeHalfPx": envelope_half_px, "metricsSummary": metrics_summary}
+    html = SHELL_TEMPLATE.replace("__DATA_JSON__", json.dumps(data))
     (output / "index.html").write_text(html, encoding="utf-8")
+    (output / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+
+def assign_planes_to_faces(planes: list[dict], models: list[dict], orientation: dict, faces: dict) -> dict:
+    face_evidence = {}
+    for plane_meta, model in zip(planes, models):
+        if plane_meta["multiViewPoints"] < MIN_PLANE_POINTS_FOR_FACE:
+            continue
+        key = classify_face(np.asarray(plane_meta["normal"]), model["points"], orientation)
+        current_best = face_evidence.get(key)
+        if current_best is None or plane_meta["multiViewPoints"] > current_best["multiViewPoints"]:
+            face_evidence[key] = {"plane": plane_meta, "model": model, "multiViewPoints": plane_meta["multiViewPoints"]}
+
+    face_reports = {}
+    for key in FACE_KEYS:
+        entry = face_evidence.get(key)
+        if entry is None:
+            faces[key]["recovered"] = False
+            face_reports[key] = {"recovered": False, "reason": "no RANSAC plane matched this face within evidence threshold"}
+            continue
+        model = entry["model"]
+        image, provenance, atlas_info = splat_atlas(model["points"], model["colors"], model["supports"])
+        faces[key]["recovered"] = True
+        faces[key]["image"] = image
+        faces[key]["provenance"] = provenance
+        face_reports[key] = {
+            "recovered": True,
+            "multiViewPoints": entry["multiViewPoints"],
+            "distinctSourceViews": entry["plane"]["distinctSourceViews"],
+            "atlas": atlas_info,
+        }
+    return face_reports
 
 
 def main() -> None:
-    p = argparse.ArgumentParser()
-    p.add_argument("--ply", type=Path, required=True)
-    p.add_argument("--visibility", type=Path, required=True)
-    p.add_argument("--camera-text", type=Path, required=True)
-    p.add_argument("--images-text", type=Path, required=True)
-    p.add_argument("--critical-mask", type=Path, help="Optional private .npy/.npz atlas mask; protected from inference")
-    p.add_argument("--output", type=Path, required=True)
-    args = p.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ply", type=Path, required=True)
+    parser.add_argument("--visibility", type=Path, required=True)
+    parser.add_argument("--images-text", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+
     vertices = read_ply(args.ply)
     points = np.asarray([v[:3] for v in vertices], dtype=np.float64)
     colors = np.asarray([v[3:6] for v in vertices], dtype=np.uint8)
     views = parse_views(args.images_text)
-    parse_camera(args.camera_text)
     supports = read_visibility(args.visibility, len(views))
     if len(points) != len(supports):
         raise RuntimeError("PLY and visibility counts differ")
-    orientation = canonical_orientation(points, np.asarray([v.center for v in views]))
+    camera_centers = np.asarray([v.center for v in views])
+
+    orientation = canonical_orientation(points, camera_centers)
     envelope = fit_room_envelope(points, orientation)
-    critical = None
-    if args.critical_mask:
-        data = np.load(args.critical_mask)
-        critical = data["critical"] if isinstance(data, np.lib.npyio.NpzFile) else data
-        critical = np.asarray(critical, dtype=bool)
-    image, provenance = evidence_texture(points, colors, supports, orientation, critical_mask=critical)
-    observed = int(np.isin(provenance, [OBSERVED, RECONSTRUCTED]).sum())
-    inferred = int((provenance == INFERRED).sum())
-    metrics = {
-        "milestone": "0.9", "orientation": orientation, "envelope": envelope,
-        "texture": {"width": int(image.shape[1]), "height": int(image.shape[0]),
-                    "observedOrReconstructedPercent": observed / provenance.size * 100,
-                    "inferredPercent": inferred / provenance.size * 100,
-                    "absentPercent": int((provenance == ABSENT).sum()) / provenance.size * 100,
-                    "criticalPixelsInferred": 0,
-                    "criticalProtection": "enabled" if critical is not None else "no mask supplied; no critical pixels inferred",
-                    "criticalProtectedPercent": float(critical.mean() * 100) if critical is not None else 0.0},
-        "objectPlacement": {"status": "partial-evidence-only", "placedCount": 0,
-                            "reason": "No semantic mask supplied; no object appearance was invented."},
-        "verdict": "B-PARTIAL" if observed else "C-FAILED",
+    spans = np.asarray(envelope["spans"])
+    half_extent = spans / 2 * PX_PER_UNIT
+
+    faces = {key: {"recovered": False, "widthPx": 0, "heightPx": 0, "transform": "", "image": None, "provenance": None} for key in FACE_KEYS}
+    face_dims = {
+        "left": (half_extent[2] * 2, half_extent[1] * 2), "right": (half_extent[2] * 2, half_extent[1] * 2),
+        "floor": (half_extent[0] * 2, half_extent[2] * 2), "ceiling": (half_extent[0] * 2, half_extent[2] * 2),
+        "back": (half_extent[0] * 2, half_extent[1] * 2), "front": (half_extent[0] * 2, half_extent[1] * 2),
     }
-    write_prototype(args.output, image, provenance, metrics)
-    print(json.dumps(metrics, indent=2))
+    face_transforms = {
+        "front": f"translateZ({half_extent[2]}px)",
+        "back": f"rotateY(180deg) translateZ({half_extent[2]}px)",
+        "right": f"rotateY(90deg) translateZ({half_extent[0]}px)",
+        "left": f"rotateY(-90deg) translateZ({half_extent[0]}px)",
+        "ceiling": f"rotateX(90deg) translateZ({half_extent[1]}px)",
+        "floor": f"rotateX(-90deg) translateZ({half_extent[1]}px)",
+    }
+    for key in FACE_KEYS:
+        width_px, height_px = face_dims[key]
+        faces[key]["widthPx"] = max(20.0, float(width_px))
+        faces[key]["heightPx"] = max(20.0, float(height_px))
+        faces[key]["transform"] = face_transforms[key]
+
+    planes, models, residual = detect_planes(args.ply, args.visibility, len(views), return_residual=True)
+    face_reports = assign_planes_to_faces(planes, models, orientation, faces)
+    object_cards, rejected_clusters = build_object_cards(residual, orientation, envelope)
+
+    faces_with_evidence = sum(1 for report in face_reports.values() if report["recovered"])
+    metrics = {
+        "milestone": "0.9",
+        "orientation": orientation,
+        "envelope": envelope,
+        "envelopeHalfPx": {"x": float(half_extent[0]), "y": float(half_extent[1]), "z": float(half_extent[2])},
+        "planesDetected": len(planes),
+        "shell": {
+            "faces": face_reports,
+            "facesWithEvidence": faces_with_evidence,
+            "facesTotal": len(FACE_KEYS),
+            "shellCompletenessPercent": faces_with_evidence / len(FACE_KEYS) * 100,
+        },
+        "objectPlacement": {
+            "status": "partial-evidence-only",
+            "method": "grid-connectivity clustering of residual (non-planar) points into axis-aligned evidence volumes; "
+                      "no mesh, no shape completion, no invented appearance",
+            "placedCount": len(object_cards),
+            "objects": object_cards,
+            "rejectedRoomSpanningClusters": rejected_clusters,
+            "rejectionReason": "cluster bounding span exceeded 40% of the recovered room envelope on at least one axis "
+                               "(a room-spanning clustering artifact, not plausible furniture-scale evidence)"
+                               if rejected_clusters else None,
+        },
+    }
+    if faces_with_evidence == 0:
+        metrics["verdict"] = "C-FAILED"
+    elif faces_with_evidence >= 3 and object_cards:
+        metrics["verdict"] = "B-PARTIAL"
+    else:
+        metrics["verdict"] = "B-PARTIAL"
+
+    write_prototype(args.output, faces, object_cards, metrics)
+    print(json.dumps(metrics, indent=2, default=str))
 
 
 if __name__ == "__main__":

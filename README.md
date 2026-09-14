@@ -30,9 +30,13 @@ The project uses Kotlin and AndroidX. It targets Android 15 (API 35) and support
 - [Contributing](CONTRIBUTING.md)
 
 The Milestone 0.9 private desktop walkthrough is built with
-`tools/milestone09_walkthrough.py`. It emits only aggregate metrics and
-provenance-coded views in the requested output directory; private photos,
-poses, masks, and renders must remain outside the repository.
+`tools/milestone09_walkthrough.py`. It renders a coarse six-face 3D room
+shell in pure CSS (no WebGL/Three.js), with pointer-drag look and WASD/arrow
+translation clamped to the recovered envelope, per-face evidence textures or
+an explicit "no evidence" panel, and partial evidence-backed object cards
+from residual (non-planar) point clusters. It emits only aggregate metrics
+and provenance-coded views in the requested output directory; private
+photos, poses, masks, and renders must remain outside the repository.
 
 ## Licensing
 
