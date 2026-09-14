@@ -6,7 +6,7 @@ Milestone 1.2 evaluated local visual memory conditioning for canonical room-face
 
 | Item | Result |
 |---|---|
-| Python executable | `C:\Users\riosc\.copilot\session-state\f7b0095f-4374-4b1c-a655-bdbc61baba17\files\radiance-env\python310\python.exe` |
+| Python runtime | Isolated local Python 3.10 environment outside the repository |
 | Python / Torch / CUDA | 3.10.11 / 2.1.2+cu118 / CUDA 11.8 |
 | GPU / total VRAM | NVIDIA GeForce RTX 3070 Laptop GPU / 8,191.5 MiB |
 | Base Inpainting Model | `stable-diffusion-v1-5/stable-diffusion-inpainting` (fp16) |
@@ -23,10 +23,10 @@ Source photographs were evaluated and ranked using 4 multi-modal signals:
 4. **Semantic wall area fraction**: Wall surface coverage detected in the photo.
 
 Top 4 ranked photographs for the `back` face:
-1. `20260709_193049.jpg` (composite score: **0.7583**, wall points: 40,145, distance: 7.12 m, alignment: 0.575)
-2. `20260709_192437.jpg` (composite score: **0.6618**, wall points: 28,864, distance: 4.56 m, alignment: 0.568)
-3. `20260709_192425.jpg` (composite score: **0.6556**, wall points: 27,935, distance: 5.21 m, alignment: 0.655)
-4. `20260709_192540.jpg` (composite score: **0.5326**, wall points: 18,273, distance: 6.50 m, alignment: 0.660)
+1. **Context A** (composite score: **0.7583**, wall points: 40,145, distance: 7.12 m, alignment: 0.575)
+2. **Context B** (composite score: **0.6618**, wall points: 28,864, distance: 4.56 m, alignment: 0.568)
+3. **Context C** (composite score: **0.6556**, wall points: 27,935, distance: 5.21 m, alignment: 0.655)
+4. **Context D** (composite score: **0.5326**, wall points: 18,273, distance: 6.50 m, alignment: 0.660)
 
 A private context contact sheet composite was generated and saved to the private session folder.
 
@@ -58,8 +58,8 @@ The exact `back` face was evaluated across all 4 conditions with fixed seed (`11
 
 ## Private artifacts
 
-All rendered comparison artifacts and contact sheets are stored locally in the private session directory:
-`C:\Users\riosc\.copilot\session-state\f7b0095f-4374-4b1c-a655-bdbc61baba17\files\milestone12-controlled-comparison`
+All rendered comparison artifacts and contact sheets are stored outside the
+repository in a private local session directory.
 
 Artifacts include:
 - `index.html`: Interactive 4-way visual comparison sheet

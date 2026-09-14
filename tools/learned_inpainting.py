@@ -27,7 +27,8 @@ from evidence_doctrine import ABSENT, IMAGINED, apply_provenance_priority
 DEFAULT_MODEL_ID = "stable-diffusion-v1-5/stable-diffusion-inpainting"
 DEFAULT_IP_ADAPTER_MODEL_ID = "h94/IP-Adapter"
 DEFAULT_IP_ADAPTER_WEIGHT_NAME = "ip-adapter_sd15.safetensors"
-DEFAULT_PACKAGE_PATH = Path(os.environ.get("REMEMBER_LEARNED_PYTHONPATH", r"C:/Users/riosc/.copilot/session-state/f7b0095f-4374-4b1c-a655-bdbc61baba17/files/learned-inpainting-packages"))
+_DEFAULT_PACKAGE_PATH_RAW = os.environ.get("REMEMBER_LEARNED_PYTHONPATH", "").strip()
+DEFAULT_PACKAGE_PATH = Path(_DEFAULT_PACKAGE_PATH_RAW) if _DEFAULT_PACKAGE_PATH_RAW else None
 DEFAULT_NEGATIVE_PROMPT = (
     "people, person, face, body, pet, animal, text, letters, signage, logo, "
     "painting, poster, artwork, framed picture, screen, television, mirror, "
@@ -44,7 +45,7 @@ class LearnedInpaintingConfig:
     max_resolution: int = 512
     allow_model_download: bool = False
     torch_dtype: str = "auto"
-    package_path: Path | None = DEFAULT_PACKAGE_PATH if DEFAULT_PACKAGE_PATH.exists() else None
+    package_path: Path | None = DEFAULT_PACKAGE_PATH
     use_ip_adapter: bool = False
     ip_adapter_model_id: str = DEFAULT_IP_ADAPTER_MODEL_ID
     ip_adapter_subfolder: str = "models"

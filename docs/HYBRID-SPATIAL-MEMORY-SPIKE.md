@@ -19,7 +19,7 @@ Built a graph over the 11 registered cameras. Edges require both shared SfM land
 | Average min-path support, strong edges | 0.541 |
 | Average min-path support, weak edges | 0.359 |
 
-Every node ended up connected to at least one other node, but the overwhelming majority of relationships (32/33) are only weak bridges. Only one pair of photographs (`20260709_192425.jpg` <-> `20260709_192437.jpg`) has evidence strong enough along its entire path to justify a local radiance bridge. This is an honest, expected consequence of an 11-photo walkthrough: most photo pairs are spatially related but not densely enough re-observed in between to support novel-view rendering.
+Every node ended up connected to at least one other node, but the overwhelming majority of relationships (32/33) are only weak bridges. Only one pair of photographs (**Anchor A** <-> **Anchor B**) has evidence strong enough along its entire path to justify a local radiance bridge. This is an honest, expected consequence of an 11-photo walkthrough: most photo pairs are spatially related but not densely enough re-observed in between to support novel-view rendering.
 
 ## Phase 3-5: anchor experience, local movement, transition design
 

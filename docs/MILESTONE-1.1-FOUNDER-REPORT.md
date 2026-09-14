@@ -9,17 +9,17 @@ reconstruction inputs, and rendered artifacts remain outside Git.
 
 | Item | Result |
 |---|---|
-| Python executable | `C:\Users\riosc\.copilot\session-state\f7b0095f-4374-4b1c-a655-bdbc61baba17\files\radiance-env\python310\python.exe` |
+| Python runtime | Isolated local Python 3.10 environment outside the repository |
 | Python / pip | 3.10.11 / pip 26.2.1 |
 | Torch / CUDA | 2.1.2+cu118 / CUDA 11.8 |
 | GPU / total VRAM | NVIDIA GeForce RTX 3070 Laptop GPU / 8,191.5 MiB |
 | Diffusers / Transformers | 0.30.3 / 4.44.2 |
 | Accelerate / Safetensors | 0.33.0 / 0.4.5 |
 | Model | `stable-diffusion-v1-5/stable-diffusion-inpainting` |
-| Model cache | `C:\Users\riosc\.cache\huggingface` (27 files, 15,230,241,054 bytes) |
+| Model cache | Private local Hugging Face cache (27 files, 15,230,241,054 bytes) |
 
 The shell `python` command resolves only to the Windows Store alias. The
-companion uses the isolated Python executable above and its existing CUDA
+companion uses the isolated Python environment above and its existing CUDA
 Torch. Diffusers, Transformers, Accelerate, and Safetensors were already
 available from the isolated learned-package directory; no runtime dependency
 or Torch package was changed.
@@ -65,11 +65,10 @@ was generated (`generatedFacesCount: 1`); object-gap generation remained `0`.
 | Pipeline generation latency | 8,940.99 ms |
 | `nvidia-smi` VRAM before / after | 243 MiB / 435 MiB |
 
-Private artifacts are at
-`C:\Users\riosc\.copilot\session-state\f7b0095f-4374-4b1c-a655-bdbc61baba17\files\milestone11a-learned-comparison`:
-Remember, deterministic Imagine, learned Imagine, input, mask, candidate,
-protected composite, and provenance for `back`, plus the private prototype and
-metrics. They were not added to Git.
+Private artifacts are stored outside the repository in a local session
+directory: Remember, deterministic Imagine, learned Imagine, input, mask,
+candidate, protected composite, and provenance for `back`, plus the private
+prototype and metrics. They were not added to Git.
 
 ## Verdict
 
