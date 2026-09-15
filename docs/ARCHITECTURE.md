@@ -106,3 +106,30 @@ RECONSTRUCTED or OBSERVED), protected pixels are restored exactly, and
 context consistency checks (palette Delta E, structural edge continuity, and
 ADE20K semantic unexpected additions) verify generation quality against
 hallucinatory additions.
+
+Milestone 1.3 turns the validated atlas + memory-conditioning pipeline into a
+single, deterministic founder-presentable apartment-memory walkthrough. A
+demo-visibility ranking (recovered-first, then intended walkthrough path
+order, weighted by projected screen area) narrows missing faces down to only
+those actually visible along the path, so generation effort is spent solely
+on demo-relevant faces. A small fixed-seed candidate set is generated per
+selected face and any candidate whose unexpected semantic additions exceed
+tolerance, or that introduces unsupported signage/text on a structural wall,
+is rejected outright and the face falls back to the deterministic engine
+(Milestone 1.0) rather than accepting non-compliant output. Cross-face
+harmonization corrects tonal seams between adjacent faces but is restricted
+to pixels marked IMAGINED in provenance metadata; every other pixel is
+asserted byte-exact before and after. A dedicated critical-region
+demonstration proves that a protected class (art/poster/TV, detected via
+ADE20K semantic segmentation from captured evidence when present) keeps its
+exact captured pixels with only surrounding structure eligible for
+generation, and that no person is fabricated. The presentation layer builds
+one frozen 5-stop walkthrough (photo-origin view, a disclosed weak Remember
+region, an explicit Remember-to-Imagine transition, the strongest immersive
+Imagine viewpoint, and constrained movement clamped to the recovered room
+envelope) and renders it in two modes from the same frozen assets: a
+product mode that hides raw metrics, file paths, and filenames, and a
+separate debug/provenance mode for internal review. All assets are
+pre-generated; a deterministic backup recording (ffmpeg `xfade` over a fixed
+frame sequence) is produced locally so the demo can run without live
+inference if needed.
