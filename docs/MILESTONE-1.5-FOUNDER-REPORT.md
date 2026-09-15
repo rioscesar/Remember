@@ -206,3 +206,140 @@ visible and byte-exact regardless, per the existing fidelity guarantee.
 Nothing from this run (photos, poses, masks, dense evidence, or the private
 output directory) was added to Git; only the generalized reader/render code
 above and its synthetic tests were.
+
+---
+
+# Addendum: Milestone 1.5B -- continuous multi-hop corridor
+
+Milestone 1.5/1.5A produced a single hero-A -> hero-B jump (a hard cut or a
+short bridged/crossfaded transition between exactly two photographs).
+Milestone 1.5B replaces that jump with a **continuous walkthrough** that can
+route through an intermediate real photograph (A -> optional C -> B) when
+the reused spatial graph shows that path is a better fit than the direct
+edge, and renders it as one unbroken, no-hard-cut video sweep rather than a
+sequence of discrete screenshots. No reconstruction, pose recovery, or
+photo-corridor doctrine was redone or changed -- this is purely a path
+selection + continuous-rendering layer on top of 1.5/1.5A's existing
+reused building blocks (spatial graph, camera poses, critical masks, depth
+layers, evidence doctrine).
+
+## What was added (generalized, capture-agnostic)
+
+- **Multi-hop path search (`select_corridor_path`).** Enumerates every
+  simple path between hero A and hero B of length <= 3 nodes (direct edge,
+  or via exactly one intermediate node C) using the existing `graph.json`
+  edges, scores each path by a per-edge cost that rewards low angular
+  change and high shared-landmark/support evidence
+  (`edge_cost = angular/180 - 0.5*support - 0.5*(shared/(shared+50))`,
+  averaged over the path's edges), and selects the lowest-cost path. The
+  direct strong edge remains a candidate and wins whenever it is genuinely
+  the better path; a via-node is only selected when the graph's own
+  evidence says the two shorter hops are collectively a better fit than the
+  one long hop.
+- **Continuous pose interpolation.** `slerp_quaternion` / `interpolate_pose`
+  (numpy-only, no new dependency) smoothly interpolate the reused recovered
+  camera center/quaternion between path nodes so a single global
+  path-progress value in [0, 1] maps continuously across every segment of
+  the selected path with no discontinuity at a via-node.
+- **Rigid-critical parallax (`composite_parallax_frame_rigid`).** Extends
+  1.5/1.5A's per-hero parallax compositor so that any pixel inside a reused
+  critical mask is forced back to its exact original photographed value on
+  every single frame -- never shifted, never blended away -- while
+  non-critical depth layers still parallax normally.
+- **Support-aware blend (`provenance_confidence` /
+  `support_aware_blend_weight`).** The crossfade weight between a segment's
+  two endpoint photos is biased per-pixel by each side's real depth-evidence
+  confidence (`OBSERVED` > `INFERRED` > `ABSENT`), so a photo's own
+  strongly-evidenced regions stay more visible longer into the transition,
+  while still resolving to a pure, unblended photo at each segment's start
+  and end.
+- **Non-gray connective space (`load_bridge_frames` /
+  `build_segment_connective_frame` / `photo_crossfade_canvas`).** For any
+  segment whose edge has a precomputed real evidence-gated radiance-bridge
+  asset available, those real bridge frames are reused directly. For any
+  segment without one, a real-photo crossfade of that segment's own two
+  endpoint photographs (blurred/desaturated via the existing
+  `make_subordinate`) is used instead -- still real captured pixels, never a
+  flat synthetic gradient. Every segment's connective source is recorded
+  explicitly in `metrics.json` (`segmentConnectiveSources`), so which real
+  material backed each part of the video is always honestly disclosed.
+- **Continuous no-hard-cut video (`render_continuous_video`).** Renders a
+  dense sequence of frames sweeping continuously across the whole selected
+  path (not per-segment, so there is no jump even at a via-node) and encodes
+  them with a single ffmpeg image-sequence pass -- no `concat` demuxer, no
+  hard per-frame holds, no text or debug overlay burned in. Fails closed to
+  the retained PNG frame sequence if `ffmpeg` is unavailable.
+- **Performance: bounded continuous-video render resolution
+  (`scale_node_record_for_video`, `--video-max-dim`, default 1600px longest
+  side).** The anchor reference photos, the 0/25/50/75/100% path-progress
+  samples, and the provenance snapshot always render at full native photo
+  resolution with byte-exact hero fidelity, exactly as in 1.5/1.5A. Only the
+  thin per-frame compositing done for the hundreds of frames of the
+  continuous video itself is bounded to a fixed working resolution before
+  final blur/blend (the connective shell was already intentionally
+  blurred/subordinate, so this changes no visible doctrine, only render
+  cost).
+
+## Validation
+
+`tools/milestone15b_synthetic_test.py` (new, 20 tests, private-data-free):
+path-cost scoring and via-node vs. direct-edge selection on synthetic
+3-node graphs built both ways; pose slerp/interpolation continuity; rigid
+critical-pixel preservation under parallax; support-aware blend weight
+behavior at segment boundaries and mid-transition; bridge-frame loading and
+fallback to real-photo crossfade when no bridge asset exists for an edge;
+end-to-end `run_continuous_corridor` producing every required raw artifact
+against a synthetic fixture, plus the outside-Git output-path rejection
+check (same pattern as every earlier milestone). **20/20 passed.** The full
+existing regression set (`milestone15_synthetic_test.py`,
+`face_guardrail_test.py`, `milestone09_synthetic_test.py`,
+`milestone13_synthetic_test.py`, `milestone14_synthetic_test.py`) still
+passes unchanged.
+
+## Real run (outside this repository, never committed)
+
+Run against the real apartment capture set's registered photographs, real
+COLMAP camera poses/intrinsics, real dense 3D evidence, real per-photo
+critical masks, and the real evidence-gated radiance-bridge asset reused
+from Milestone 1.5A. The path search selected the two-hop via-node path
+(mean edge cost lower than the direct edge, by real angular-change and
+shared-landmark/support evidence in the reused graph) rather than the
+direct strong edge -- a genuine outcome of the new path-search feature, not
+a fixture artifact. The direct edge's own precomputed radiance-bridge
+frames therefore did not cover either selected segment, so both segments
+correctly fell back to the real-photo crossfade connective source; this is
+disclosed explicitly per-sample in `metrics.json` rather than silently
+substituted.
+
+Produced: three byte-exact anchor reference photographs (hero A, via node
+C, hero B; SHA-256-verified against the originals), five path-progress
+samples at 0/25/50/75/100%, a combined provenance snapshot plus one
+per-node provenance overlay, `metrics.json` (selected path, per-edge
+angular/support/shared-landmark scores, per-node depth-provenance and
+critical-pixel percentages, connective-source-per-sample, 0 critical
+violations), and one continuous, no-hard-cut, 15.0s/24fps MP4 (1600x1200
+render resolution for the continuous sweep; anchors/samples/provenance
+remain full native photo resolution) produced via ffmpeg. Depth provenance
+across the three real path nodes was low single-digit-percent directly
+`OBSERVED` (expected for this sparse dense-evidence export against full
+photo pixel counts) with the remainder bounded-`INFERRED` or left
+flat/`ABSENT`; every hero/via-node pixel remained visible and byte-exact
+regardless, per the existing fidelity guarantee. Critical-region
+rigid-preservation held at 0 violations throughout the full 360-frame
+render.
+
+## Scope boundaries respected
+
+No reconstruction was redone, no pose was re-recovered, no representation
+doctrine was pivoted or relaxed, no change to `evidence_doctrine.py`,
+`spatial_graph.py`, or `milestone15_photo_corridor.py`'s existing
+single-hop functions (all reused unmodified via import). Only
+`tools/milestone15b_continuous_corridor.py` (new module),
+`tools/milestone15b_synthetic_test.py` (new tests), and this addendum were
+added. No photograph, render, mask, model file, bridge asset, or private
+path was added to Git.
+
+## Verdict
+
+Ready for founder review. Work stops here; nothing was pushed or committed
+without explicit instruction.
