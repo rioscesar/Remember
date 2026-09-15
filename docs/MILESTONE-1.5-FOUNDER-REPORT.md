@@ -122,3 +122,87 @@ Git.
 ## Verdict
 
 Ready for founder review. Work stops here; nothing was pushed or committed.
+
+
+---
+
+# Addendum: Milestone 1.5A -- real apartment capture integration
+
+Milestone 1.5's builder (`tools/milestone15_photo_corridor.py`) has now been
+exercised end-to-end against a genuine apartment capture set (real
+photographs, real COLMAP camera poses/intrinsics, real dense 3D evidence,
+real per-photo critical masks) instead of the synthetic fixture above. No
+capture-specific path, filename, or constant was added to Git; only
+generalized reader/render functions were added to the tool.
+
+## What was added (generalized, capture-agnostic)
+
+- **Real COLMAP camera intrinsics.** `representation_spike.parse_camera`
+  strictly requires the PINHOLE model. Real capture pipelines commonly
+  register `SIMPLE_RADIAL`/`SIMPLE_PINHOLE`/`RADIAL`, one distinct camera per
+  photo. `parse_colmap_cameras_txt` / `parse_colmap_image_camera_ids` /
+  `load_real_camera_intrinsics` read these directly (radial distortion is
+  not applied -- treated as a pinhole approximation, exactly like the
+  existing heuristic, except now driven by the real recovered focal
+  length). `scale_camera_to_photo` rescales intrinsics when the hero photo
+  on disk is a downscaled preview of the calibration resolution.
+- **Critical-mask threading.** `build_depth_layers` now accepts an optional
+  real `critical_mask` (e.g. from `scene_risk_segmentation.py`'s `.npz`
+  export via the new `load_critical_mask_npz`), reported in depth
+  provenance/critical-pixel bookkeeping. It never changes which real pixels
+  are shown -- verified by a synthetic test that the union of visible pixels
+  stays byte-exact with or without a mask.
+- **Provenance screenshot.** `render_provenance_screenshot` produces a raw
+  overlay (`evidence_doctrine.py` codes only -- never conflated with any
+  other module's provenance legend) tinting OBSERVED/INFERRED/ABSENT depth
+  regions and outlining any critical mask, without altering the underlying
+  photo pixels.
+- **Raw recording.** `render_raw_recording` concatenates the existing raw
+  screenshot frames into a single 10-20s video via `ffmpeg` (hard cuts only,
+  no crossfade -- deliberately rawer than Milestone 1.3's crossfaded backup
+  recording pattern it's modeled on), failing closed to the existing PNG
+  frame sequence with an explicit blocker message if `ffmpeg` is
+  unavailable.
+- **Pose override for cross-reconstruction coordinate frames.** The
+  real-capture run surfaced an important finding: the reused spatial graph
+  and a given dense-evidence export can come from *different* reconstruction
+  runs (different registered-photo counts, different coordinate
+  frame/scale) even when they share photo names. Projecting a graph node's
+  pose into a dense-evidence run it did not come from produced zero
+  supported pixels. `load_pose_overrides` (via
+  `representation_spike.parse_views`, reused unmodified) reads poses
+  straight from the SAME `images.txt` as the dense evidence; `pose_overrides`
+  on `run_photo_corridor` substitutes a hero's graph-node pose with the
+  matching override when present. The graph still decides which two photos
+  are heroes (edge/evidence classification is unaffected); only the pose
+  *numbers* used for projection are corrected to the matching reconstruction.
+
+## Validation
+
+`tools/milestone15_synthetic_test.py` grew from 9 to 16 tests (all still
+private-data-free): real-shaped COLMAP camera/pose parsing (SIMPLE_RADIAL
+and PINHOLE), intrinsics rescaling, critical-mask threading without altering
+shown pixels, the provenance screenshot, the pose-override end-to-end path
+(including a synthetic reproduction of the coordinate-frame mismatch), and
+the raw-recording ffmpeg/fallback behavior. **16/16 passed.** The full
+existing regression set (`face_guardrail_test.py`,
+`milestone09_synthetic_test.py`, `milestone13_synthetic_test.py`,
+`milestone14_synthetic_test.py`) still passes unchanged.
+
+An end-to-end run against the real apartment capture set (outside this
+repository, never committed) produced all seven requested raw artifacts:
+a byte-exact hero-A reference photo, an entry screenshot, a mid-corridor
+(subordinate shell) screenshot, a byte-exact hero-B destination photo plus
+destination screenshot, a real `ffmpeg`-produced ~16.7s raw hard-cut MP4
+recording (within the 10-20s requirement), a provenance screenshot per hero,
+and `metrics.json`. Both hero reference photos were independently
+SHA-256-verified byte-identical to the original captured files. Depth
+provenance on this real, sparse dense-evidence set was low
+single-digit-percent directly `OBSERVED` (expected for a sparse point
+export against full-resolution photo pixel counts) with the remainder
+bounded-`INFERRED` or left flat/`ABSENT` -- every hero pixel remained
+visible and byte-exact regardless, per the existing fidelity guarantee.
+
+Nothing from this run (photos, poses, masks, dense evidence, or the private
+output directory) was added to Git; only the generalized reader/render code
+above and its synthetic tests were.

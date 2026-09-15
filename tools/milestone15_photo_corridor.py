@@ -44,6 +44,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -173,6 +175,134 @@ def default_camera_for_photo(width: int, height: int) -> Camera:
     return Camera(width, height, focal, focal, width / 2.0, height / 2.0)
 
 
+# --------------------------------------------------------------------------
+# Real COLMAP intrinsics (Milestone 1.5A: real apartment capture integration).
+#
+# `representation_spike.parse_camera` requires the COLMAP camera model to be
+# exactly PINHOLE and raises otherwise; real per-photo COLMAP exports from
+# this capture pipeline use SIMPLE_RADIAL (and sometimes SIMPLE_PINHOLE),
+# one distinct camera per photo. These two functions are a generalized,
+# capture-agnostic reader for that case -- no photo names, paths, or
+# apartment-specific constants are hardcoded here. `representation_spike`
+# itself is reused unmodified (`quaternion_rotation`, the `Camera` dataclass);
+# this only adds the camera-model coverage it deliberately does not provide.
+# --------------------------------------------------------------------------
+
+SUPPORTED_COLMAP_CAMERA_MODELS = {
+    "PINHOLE": 4,          # fx, fy, cx, cy
+    "SIMPLE_PINHOLE": 3,   # f, cx, cy
+    "SIMPLE_RADIAL": 4,    # f, cx, cy, k  (radial distortion ignored below)
+    "RADIAL": 5,           # f, cx, cy, k1, k2 (radial distortion ignored below)
+}
+
+
+def parse_colmap_cameras_txt(cameras_text: Path) -> dict[str, Camera]:
+    """Parse a COLMAP `cameras.txt` into `{camera_id: Camera}`.
+
+    Supports PINHOLE, SIMPLE_PINHOLE, SIMPLE_RADIAL and RADIAL. Radial
+    distortion coefficients (if any) are not applied -- intrinsics are used
+    as a pinhole approximation, exactly like `default_camera_for_photo`'s
+    documented approximation, except the focal length/principal point here
+    are the REAL recovered calibration values rather than a heuristic guess.
+    """
+    cameras: dict[str, Camera] = {}
+    for line in cameras_text.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        camera_id, model, width, height = fields[0], fields[1], int(fields[2]), int(fields[3])
+        if model not in SUPPORTED_COLMAP_CAMERA_MODELS:
+            raise ValueError(f"unsupported COLMAP camera model '{model}' in {cameras_text}")
+        params = [float(value) for value in fields[4:]]
+        if model == "PINHOLE":
+            fx, fy, cx, cy = params[:4]
+        elif model == "SIMPLE_PINHOLE":
+            fx = fy = params[0]
+            cx, cy = params[1], params[2]
+        else:  # SIMPLE_RADIAL, RADIAL
+            fx = fy = params[0]
+            cx, cy = params[1], params[2]
+        cameras[camera_id] = Camera(width, height, fx, fy, cx, cy)
+    return cameras
+
+
+def parse_colmap_image_camera_ids(images_text: Path) -> dict[str, str]:
+    """Map `{image name: camera_id}` from a COLMAP `images.txt`.
+
+    Only reads the pose line of each image record (every other non-comment
+    line); the following 2D-point line is skipped. This is intentionally
+    separate from `representation_spike.parse_views`, which discards the
+    camera id -- reused here only for the id-to-name mapping it lacks.
+    """
+    mapping: dict[str, str] = {}
+    lines = [line for line in images_text.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")]
+    for line in lines[0::2]:
+        fields = line.split()
+        camera_id, name = fields[8], fields[9]
+        mapping[name] = camera_id
+    return mapping
+
+
+def load_real_camera_intrinsics(cameras_text: Path, images_text: Path) -> dict[str, Camera]:
+    """Combine the two parsers above into `{photo name: Camera}`.
+
+    Intrinsics are at the reconstruction's native calibration resolution;
+    call `scale_camera_to_photo` before use if the hero photo on disk is a
+    downscaled preview of that same capture.
+    """
+    cameras_by_id = parse_colmap_cameras_txt(cameras_text)
+    camera_id_by_name = parse_colmap_image_camera_ids(images_text)
+    return {
+        name: cameras_by_id[camera_id]
+        for name, camera_id in camera_id_by_name.items()
+        if camera_id in cameras_by_id
+    }
+
+
+def load_pose_overrides(images_text: Path) -> dict[str, dict]:
+    """`{photo name: {"center": [...], "quaternion": [...]}}` from a COLMAP
+    `images.txt`, via `representation_spike.parse_views` (reused unmodified).
+
+    The reused spatial graph (`spatial_graph.py`'s graph.json) may be built
+    from a DIFFERENT reconstruction run than a given dense-evidence export
+    (different photo count/coordinate frame/scale -- SfM scale is always
+    arbitrary, see docs/ARCHITECTURE.md). When both exist for the same hero
+    photos, the graph should still decide which two photos are heroes
+    (edge/evidence classification), but the pose numbers used to project
+    that reconstruction's OWN dense points must come from that SAME
+    reconstruction's `images.txt`, not the graph node. This loader supplies
+    that override; `run_photo_corridor`'s `pose_overrides` falls back to the
+    graph node pose whenever a name is not present here.
+    """
+    from representation_spike import parse_views
+    return {view.name: {"center": view.center, "quaternion": view.quaternion} for view in parse_views(images_text)}
+
+
+def scale_camera_to_photo(camera: Camera, photo_width: int, photo_height: int) -> Camera:
+    """Rescale intrinsics when the photo on disk differs from calibration size.
+
+    Preview/downscaled photos are common (smaller than the full-resolution
+    captures COLMAP was calibrated against); focal length and principal
+    point both scale linearly with image size, so this is exact, not an
+    approximation.
+    """
+    if camera.width == photo_width and camera.height == photo_height:
+        return camera
+    scale_x = photo_width / camera.width
+    scale_y = photo_height / camera.height
+    return Camera(photo_width, photo_height, camera.fx * scale_x, camera.fy * scale_y, camera.cx * scale_x, camera.cy * scale_y)
+
+
+def load_critical_mask_npz(path: Path, key: str = "critical") -> np.ndarray:
+    """Load a boolean critical mask from a `scene_risk_segmentation.py`-style
+    `.npz` export (keys: structural/object/critical). Only the `critical`
+    array is reused here -- it is never re-derived, only threaded through so
+    hero depth-layer construction never treats a critical region as safe to
+    bounded-fill without being counted."""
+    with np.load(path) as data:
+        return data[key].astype(bool)
+
 def project_sparse_depth(
     points_xyz: np.ndarray,
     center: np.ndarray,
@@ -211,6 +341,7 @@ def build_depth_layers(
     camera: Camera,
     layers: int = DEFAULT_LAYERS,
     max_hole_fill_fraction: float = 0.08,
+    critical_mask: np.ndarray | None = None,
 ) -> dict:
     """Split a hero photo into `layers` depth-ordered RGBA planes.
 
@@ -220,10 +351,26 @@ def build_depth_layers(
     diagonal) are conservatively left "flat" (shift factor 0, ABSENT depth
     provenance) rather than guessed -- they still display the real photo,
     they simply do not parallax.
+
+    `critical_mask`, if given (a real reused critical mask, e.g. from
+    `evidence_doctrine.risk_masks_from_labels`/`scene_risk_segmentation.py`,
+    resized to this photo's resolution), is threaded into the bounded local
+    depth fill so critical regions are never silently smoothed over when
+    counting/reporting depth provenance. It never changes which real photo
+    pixels are shown -- only depth-layer bookkeeping and the provenance
+    screenshot use it.
     """
     height, width = photo_bgr.shape[:2]
     if layers < 2:
         raise ValueError("at least 2 depth layers are required for parallax")
+    if critical_mask is None:
+        critical_mask_hw = np.zeros((height, width), dtype=bool)
+    else:
+        critical_mask_hw = critical_mask.astype(bool)
+        if critical_mask_hw.shape != (height, width):
+            critical_mask_hw = cv2.resize(
+                critical_mask_hw.astype(np.uint8), (width, height), interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
 
     depth_buffer, supported = project_sparse_depth(points_xyz, center, quaternion, camera)
     if not supported.any():
@@ -238,7 +385,7 @@ def build_depth_layers(
 
     max_distance_px = max(height, width) * max_hole_fill_fraction
     filled_bgr, delta = bounded_inference_fill(
-        depth_as_bgr, supported, critical_mask=np.zeros((height, width), dtype=bool), max_distance_px=max_distance_px,
+        depth_as_bgr, supported, critical_mask=critical_mask_hw, max_distance_px=max_distance_px,
     )
     inferred = delta == INFERRED
     classified = supported | inferred
@@ -288,6 +435,12 @@ def build_depth_layers(
         },
         "flatPixelCount": int(flat_mask.sum()),
         "camera": {"width": camera.width, "height": camera.height, "fx": camera.fx, "fy": camera.fy},
+        # Not written verbatim into metrics.json (raw arrays); consumed by
+        # `render_provenance_screenshot` and by callers that report a real
+        # critical-pixel count alongside depth provenance.
+        "depthProvenance": depth_provenance,
+        "criticalMask": critical_mask_hw if critical_mask is not None else None,
+        "criticalPixelPercent": float(critical_mask_hw.mean() * 100.0) if critical_mask is not None else 0.0,
     }
 
 
@@ -306,6 +459,51 @@ def composite_offset_frame(layer_records: list[dict], width: int, height: int, o
         canvas[:, :, :3] = (warped[:, :, :3].astype(np.float32) * alpha + canvas[:, :, :3].astype(np.float32) * (1 - alpha)).astype(np.uint8)
         canvas[:, :, 3] = np.clip(canvas[:, :, 3].astype(np.float32) + warped[:, :, 3].astype(np.float32) * (1 - canvas[:, :, 3:4].astype(np.float32).squeeze(-1) / 255.0), 0, 255).astype(np.uint8)
     return canvas
+
+
+# --------------------------------------------------------------------------
+# Raw provenance screenshot (real evidence_doctrine.py codes, never the
+# legacy scene_risk_segmentation.py provenance legend).
+# --------------------------------------------------------------------------
+
+PROVENANCE_OVERLAY_COLORS_BGR = {
+    OBSERVED: (60, 200, 60),    # green: real 3D evidence supports depth here.
+    INFERRED: (40, 160, 230),   # amber: bounded local fill, still real pixels.
+    ABSENT: (90, 90, 90),       # gray: no nearby evidence, shown flat (no parallax).
+}
+
+
+def render_provenance_screenshot(
+    photo_bgr: np.ndarray,
+    depth_provenance: np.ndarray,
+    critical_mask: np.ndarray | None = None,
+    overlay_alpha: float = 0.35,
+) -> np.ndarray:
+    """Raw, unpolished provenance overlay for one hero photo.
+
+    Tints the REAL photo pixels (never replaces them) by depth provenance
+    (OBSERVED/INFERRED/ABSENT, `evidence_doctrine.py` codes) and outlines any
+    reused critical mask in red. Produced only for reporting/inspection; the
+    hero layers themselves never use this image.
+    """
+    overlay = photo_bgr.copy()
+    for code, color in PROVENANCE_OVERLAY_COLORS_BGR.items():
+        mask = depth_provenance == code
+        if not mask.any():
+            continue
+        tint = np.zeros_like(overlay)
+        tint[mask] = color
+        blended = cv2.addWeighted(photo_bgr, 1 - overlay_alpha, tint, overlay_alpha, 0)
+        overlay[mask] = blended[mask]
+    if critical_mask is not None and critical_mask.any():
+        contours, _ = cv2.findContours(critical_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(overlay, contours, -1, (20, 20, 220), 2)
+    cv2.putText(
+        overlay,
+        "depth: green=OBSERVED amber=INFERRED gray=ABSENT | red outline=CRITICAL (never touched)",
+        (10, overlay.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA,
+    )
+    return overlay
 
 
 # --------------------------------------------------------------------------
@@ -497,12 +695,22 @@ def build_walkthrough(
     cv2.imwrite(str(shell_dir / "shell.png"), shell["imageBgr"])
 
     screenshot_count = 0
-    for hero_name, layers in ((hero_a_name, hero_a_layers), (hero_b_name, hero_b_layers)):
+    hero_a_frame_paths: list[Path] = []
+    hero_b_frame_paths: list[Path] = []
+    for hero_name, layers, frame_paths in (
+        (hero_a_name, hero_a_layers, hero_a_frame_paths),
+        (hero_b_name, hero_b_layers, hero_b_frame_paths),
+    ):
         height, width = layers["layers"][0]["rgba"].shape[:2]
         for offset in SCREENSHOT_OFFSETS_PX:
             frame = composite_offset_frame(layers["layers"], width, height, offset)
-            cv2.imwrite(str(screenshots_dir / f"{hero_name}-offset-{offset[0]}-{offset[1]}.png"), frame)
+            path = screenshots_dir / f"{hero_name}-offset-{offset[0]}-{offset[1]}.png"
+            cv2.imwrite(str(path), frame)
+            frame_paths.append(path)
             screenshot_count += 1
+    # Raw hard-cut recording order: hero A parallax sweep, subordinate shell,
+    # hero B parallax sweep -- no crossfade, no freeze/polish.
+    raw_recording_frame_paths = [*hero_a_frame_paths, shell_dir / "shell.png", *hero_b_frame_paths]
 
     stops = [
         {"kind": "hero", "name": hero_a_name, "layers": hero_a_entries, "holdMs": hero_hold_ms},
@@ -530,6 +738,10 @@ def build_walkthrough(
         encoding="utf-8",
     )
     (output / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    # Not written to metrics.json above (absolute local paths); attached to
+    # the in-memory dict only so `run_photo_corridor` can hand the same raw
+    # frames to `render_raw_recording` without re-deriving them.
+    metrics["_rawRecordingFramePaths"] = raw_recording_frame_paths
     return metrics
 
 
@@ -545,6 +757,61 @@ def load_photo(path: Path) -> tuple[np.ndarray, bytes]:
     return image, raw
 
 
+def render_raw_recording(frame_paths: list[Path], output_dir: Path, duration_s: float) -> dict:
+    """Concatenate already-written raw screenshot frames into one 10-20s
+    recording via ffmpeg, hard cuts only (no crossfade/polish, per the raw
+    Milestone 1.5A brief). Fails closed to the existing PNG frame sequence
+    already on disk if ffmpeg is unavailable -- never fabricates a video.
+    """
+    duration_s = min(max(duration_s, MIN_DURATION_S), MAX_DURATION_S)
+    ffmpeg_path = shutil.which("ffmpeg")
+    hold_s = duration_s / max(len(frame_paths), 1)
+    result = {
+        "frameCount": len(frame_paths),
+        "holdSecondsPerFrame": round(hold_s, 3),
+        "expectedDurationSeconds": round(duration_s, 2),
+        "style": "hard-cut, no crossfade (raw, unpolished)",
+        "ffmpegAvailable": ffmpeg_path is not None,
+        "produced": False,
+        "outputPath": None,
+        "frameSequence": [str(p) for p in frame_paths],
+        "blocker": None,
+    }
+    if not frame_paths:
+        result["blocker"] = "no raw screenshot frames available to concatenate"
+        return result
+    if ffmpeg_path is None:
+        result["blocker"] = (
+            "ffmpeg was not found on PATH locally; the reproducible PNG frame "
+            "sequence above is retained as the raw recording artifact instead."
+        )
+        return result
+
+    list_path = output_dir / "raw-recording-frames.txt"
+    lines = []
+    for frame_path in frame_paths:
+        lines.append(f"file '{frame_path.resolve().as_posix()}'")
+        lines.append(f"duration {hold_s:.3f}")
+    lines.append(f"file '{frame_paths[-1].resolve().as_posix()}'")  # ffmpeg concat quirk: repeat last entry.
+    list_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    output_path = output_dir / "milestone15a-raw-walkthrough.mp4"
+    cmd = [
+        ffmpeg_path, "-y", "-f", "concat", "-safe", "0", "-i", str(list_path),
+        "-vf", "fps=24,format=yuv420p", str(output_path),
+    ]
+    try:
+        completed = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        if completed.returncode == 0 and output_path.exists():
+            result["produced"] = True
+            result["outputPath"] = str(output_path)
+        else:
+            result["blocker"] = f"ffmpeg exited {completed.returncode}: {completed.stderr[-800:]}"
+    except Exception as exc:  # pragma: no cover -- environment-dependent
+        result["blocker"] = f"ffmpeg invocation failed: {exc}"
+    return result
+
+
 def run_photo_corridor(
     graph: dict,
     photos_dir: Path,
@@ -553,27 +820,67 @@ def run_photo_corridor(
     hero_a: str | None = None,
     hero_b: str | None = None,
     camera: Camera | None = None,
+    camera_a: Camera | None = None,
+    camera_b: Camera | None = None,
+    critical_mask_a: np.ndarray | None = None,
+    critical_mask_b: np.ndarray | None = None,
+    pose_overrides: dict[str, dict] | None = None,
     layers: int = DEFAULT_LAYERS,
     duration_s: float = DEFAULT_DURATION_S,
     shell_engine: str = "deterministic",
 ) -> dict:
+    """Build the full raw corridor.
+
+    `camera` applies the same intrinsics to both heroes (synthetic/legacy
+    use); `camera_a`/`camera_b` take precedence when the two heroes have
+    distinct real per-photo calibration (the normal real-capture case, since
+    COLMAP registers one camera per photo, not one shared camera).
+    `critical_mask_a`/`critical_mask_b`, if given, are real reused critical
+    masks (see `load_critical_mask_npz`) resized to each hero photo; they are
+    never used to alter which real pixels are shown, only to report depth
+    provenance/critical-pixel bookkeeping and to draw the provenance
+    screenshot outline. `pose_overrides` (see `load_pose_overrides`), if a
+    hero's name is present in it, replaces that hero's graph-node pose --
+    required whenever the spatial graph and `points_xyz` come from different
+    reconstruction runs (the graph still decides which two photos are
+    heroes; the override guarantees the pose used to project `points_xyz`
+    is from that SAME run as the points, not a mismatched coordinate frame).
+    """
     hero_a_name, hero_b_name, edge = select_hero_pair(graph, hero_a, hero_b)
     nodes_by_name = {node["name"]: node for node in graph["nodes"]}
     hero_a_node = nodes_by_name[hero_a_name]
     hero_b_node = nodes_by_name[hero_b_name]
+    pose_overrides = pose_overrides or {}
+    hero_a_pose = pose_overrides.get(hero_a_name, hero_a_node)
+    hero_b_pose = pose_overrides.get(hero_b_name, hero_b_node)
 
     hero_a_bgr, hero_a_raw = load_photo(photos_dir / hero_a_name)
     hero_b_bgr, hero_b_raw = load_photo(photos_dir / hero_b_name)
     hero_a_hash = sha256_bytes(hero_a_raw)
     hero_b_hash = sha256_bytes(hero_b_raw)
 
-    camera_a = camera or default_camera_for_photo(hero_a_bgr.shape[1], hero_a_bgr.shape[0])
-    camera_b = camera or default_camera_for_photo(hero_b_bgr.shape[1], hero_b_bgr.shape[0])
+    camera_a_final = camera_a or camera or default_camera_for_photo(hero_a_bgr.shape[1], hero_a_bgr.shape[0])
+    camera_b_final = camera_b or camera or default_camera_for_photo(hero_b_bgr.shape[1], hero_b_bgr.shape[0])
 
-    hero_a_layers = build_depth_layers(hero_a_bgr, points_xyz, hero_a_node["center"], hero_a_node["quaternion"], camera_a, layers=layers)
-    hero_b_layers = build_depth_layers(hero_b_bgr, points_xyz, hero_b_node["center"], hero_b_node["quaternion"], camera_b, layers=layers)
+    hero_a_layers = build_depth_layers(
+        hero_a_bgr, points_xyz, hero_a_pose["center"], hero_a_pose["quaternion"], camera_a_final,
+        layers=layers, critical_mask=critical_mask_a,
+    )
+    hero_b_layers = build_depth_layers(
+        hero_b_bgr, points_xyz, hero_b_pose["center"], hero_b_pose["quaternion"], camera_b_final,
+        layers=layers, critical_mask=critical_mask_b,
+    )
 
-    all_centers = np.stack([np.asarray(node["center"]) for node in graph["nodes"]])
+    # Room-envelope orientation must use camera centers from the SAME
+    # coordinate frame as `points_xyz`. When pose overrides are supplied
+    # (graph and dense evidence are different reconstruction runs), only the
+    # override centers are guaranteed consistent with `points_xyz` -- fall
+    # back to all graph node centers only when no overrides were given.
+    if pose_overrides:
+        override_names = [name for name in (hero_a_name, hero_b_name) if name in pose_overrides]
+        all_centers = np.stack([np.asarray(pose_overrides[name]["center"]) for name in override_names])
+    else:
+        all_centers = np.stack([np.asarray(node["center"]) for node in graph["nodes"]])
     orientation = canonical_orientation(points_xyz, all_centers)
     envelope = fit_room_envelope(points_xyz, orientation)
 
@@ -584,6 +891,33 @@ def run_photo_corridor(
     require_private_output(output, Path(__file__).resolve().parents[1])
     output.mkdir(parents=True, exist_ok=True)
     metrics = build_walkthrough(output, hero_a_name, hero_b_name, hero_a_layers, hero_b_layers, shell, duration_s)
+    raw_recording_frame_paths = metrics.pop("_rawRecordingFramePaths")
+
+    # Raw, exactly-named artifacts requested for the real-capture rebuild:
+    # byte-exact hero originals, an "entry"/"destination" screenshot at rest,
+    # the subordinate mid-corridor shell, a provenance screenshot, and a
+    # 10-20s raw recording (or an explicit ffmpeg-unavailable fallback).
+    reference_dir = output / "reference"
+    reference_dir.mkdir(parents=True, exist_ok=True)
+    hero_a_ext = Path(hero_a_name).suffix or ".jpg"
+    hero_b_ext = Path(hero_b_name).suffix or ".jpg"
+    (reference_dir / f"hero-a-reference{hero_a_ext}").write_bytes(hero_a_raw)
+    (reference_dir / f"hero-b-destination-original{hero_b_ext}").write_bytes(hero_b_raw)
+
+    entry_frame = composite_offset_frame(hero_a_layers["layers"], hero_a_bgr.shape[1], hero_a_bgr.shape[0], (0, 0))
+    cv2.imwrite(str(output / "entry-screenshot.png"), entry_frame)
+    cv2.imwrite(str(output / "mid-corridor.png"), shell["imageBgr"])
+    destination_frame = composite_offset_frame(hero_b_layers["layers"], hero_b_bgr.shape[1], hero_b_bgr.shape[0], (0, 0))
+    cv2.imwrite(str(output / "hero-b-destination-screenshot.png"), destination_frame)
+
+    provenance_dir = output / "provenance"
+    provenance_dir.mkdir(parents=True, exist_ok=True)
+    provenance_a = render_provenance_screenshot(hero_a_bgr, hero_a_layers["depthProvenance"], hero_a_layers["criticalMask"])
+    provenance_b = render_provenance_screenshot(hero_b_bgr, hero_b_layers["depthProvenance"], hero_b_layers["criticalMask"])
+    cv2.imwrite(str(provenance_dir / "provenance-hero-a.png"), provenance_a)
+    cv2.imwrite(str(provenance_dir / "provenance-hero-b.png"), provenance_b)
+
+    recording = render_raw_recording(raw_recording_frame_paths, output, duration_s)
 
     # Fidelity check: re-hash the exact bytes written for the hero photos'
     # nearest (fully opaque, no-hole) reference so a caller can independently
@@ -595,6 +929,20 @@ def run_photo_corridor(
     metrics["selectedEdge"] = edge
     metrics["roomEnvelope"] = {"spans": envelope["spans"], "method": envelope["method"]}
     metrics["criticalViolations"] = 0  # hero pixels are never regenerated; shell is a pure synthetic canvas.
+    metrics["heroACriticalPixelPercent"] = hero_a_layers["criticalPixelPercent"]
+    metrics["heroBCriticalPixelPercent"] = hero_b_layers["criticalPixelPercent"]
+    metrics["rawRecording"] = recording
+    metrics["rawArtifacts"] = {
+        "heroAReference": str(reference_dir / f"hero-a-reference{hero_a_ext}"),
+        "entryScreenshot": str(output / "entry-screenshot.png"),
+        "midCorridor": str(output / "mid-corridor.png"),
+        "heroBDestinationOriginal": str(reference_dir / f"hero-b-destination-original{hero_b_ext}"),
+        "heroBDestinationScreenshot": str(output / "hero-b-destination-screenshot.png"),
+        "provenanceScreenshotHeroA": str(provenance_dir / "provenance-hero-a.png"),
+        "provenanceScreenshotHeroB": str(provenance_dir / "provenance-hero-b.png"),
+        "rawRecording": recording.get("outputPath"),
+        "metrics": str(output / "metrics.json"),
+    }
     (output / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     return metrics
 
@@ -610,7 +958,22 @@ def main() -> None:
     parser.add_argument("--layers", type=int, default=DEFAULT_LAYERS)
     parser.add_argument("--duration-seconds", type=float, default=DEFAULT_DURATION_S)
     parser.add_argument("--shell-engine", choices=["deterministic", "learned", "auto"], default="deterministic")
-    parser.add_argument("--camera-text", type=Path, default=None, help="optional COLMAP PINHOLE cameras.txt")
+    parser.add_argument("--camera-text", type=Path, default=None, help="optional COLMAP PINHOLE cameras.txt (single shared camera)")
+    parser.add_argument(
+        "--cameras-text", type=Path, default=None,
+        help="optional COLMAP cameras.txt (PINHOLE/SIMPLE_PINHOLE/SIMPLE_RADIAL/RADIAL, one camera per photo)",
+    )
+    parser.add_argument(
+        "--images-text", type=Path, default=None,
+        help="optional COLMAP images.txt, required alongside --cameras-text to map photo name to camera id",
+    )
+    parser.add_argument("--critical-mask-a", type=Path, default=None, help="optional scene_risk_segmentation.py .npz for hero A")
+    parser.add_argument("--critical-mask-b", type=Path, default=None, help="optional scene_risk_segmentation.py .npz for hero B")
+    parser.add_argument(
+        "--poses-text", type=Path, default=None,
+        help="optional COLMAP images.txt from the SAME reconstruction run as --dense-evidence, used to override a "
+             "hero's pose when the spatial graph was built from a different reconstruction run",
+    )
     args = parser.parse_args()
 
     graph = json.loads(args.graph.read_text(encoding="utf-8"))
@@ -622,10 +985,31 @@ def main() -> None:
         from representation_spike import parse_camera
         camera = parse_camera(args.camera_text)
 
+    camera_a = camera_b = None
+    if args.cameras_text is not None and args.images_text is not None:
+        hero_a_name, hero_b_name, _ = select_hero_pair(graph, args.hero_a, args.hero_b)
+        real_intrinsics = load_real_camera_intrinsics(args.cameras_text, args.images_text)
+        photo_sizes = {}
+        for name in (hero_a_name, hero_b_name):
+            photo, _ = load_photo(args.photos_dir / name)
+            photo_sizes[name] = (photo.shape[1], photo.shape[0])
+        if hero_a_name in real_intrinsics:
+            width, height = photo_sizes[hero_a_name]
+            camera_a = scale_camera_to_photo(real_intrinsics[hero_a_name], width, height)
+        if hero_b_name in real_intrinsics:
+            width, height = photo_sizes[hero_b_name]
+            camera_b = scale_camera_to_photo(real_intrinsics[hero_b_name], width, height)
+
+    critical_mask_a = load_critical_mask_npz(args.critical_mask_a) if args.critical_mask_a is not None else None
+    critical_mask_b = load_critical_mask_npz(args.critical_mask_b) if args.critical_mask_b is not None else None
+
+    pose_overrides = load_pose_overrides(args.poses_text) if args.poses_text is not None else None
+
     started = time.perf_counter()
     metrics = run_photo_corridor(
         graph, args.photos_dir, points_xyz, args.output,
-        hero_a=args.hero_a, hero_b=args.hero_b, camera=camera,
+        hero_a=args.hero_a, hero_b=args.hero_b, camera=camera, camera_a=camera_a, camera_b=camera_b,
+        critical_mask_a=critical_mask_a, critical_mask_b=critical_mask_b, pose_overrides=pose_overrides,
         layers=args.layers, duration_s=args.duration_seconds, shell_engine=args.shell_engine,
     )
     metrics["buildLatencyMs"] = round((time.perf_counter() - started) * 1000, 1)

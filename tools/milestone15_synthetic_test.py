@@ -21,7 +21,16 @@ from milestone15_photo_corridor import (
     build_walkthrough,
     composite_offset_frame,
     default_camera_for_photo,
+    load_critical_mask_npz,
+    load_pose_overrides,
+    load_real_camera_intrinsics,
+    parse_colmap_cameras_txt,
+    parse_colmap_image_camera_ids,
+    render_provenance_screenshot,
+    render_raw_recording,
     require_private_output,
+    run_photo_corridor,
+    scale_camera_to_photo,
     select_hero_pair,
     sha256_bytes,
 )
@@ -215,6 +224,199 @@ def test_sha256_bytes_matches_hashlib() -> None:
     assert sha256_bytes(data) == hashlib.sha256(data).hexdigest()
 
 
+SYNTHETIC_CAMERAS_TXT = """# synthetic, no real capture
+1 SIMPLE_RADIAL 400 300 350.0 200.0 150.0 0.01
+2 PINHOLE 400 300 360.0 355.0 200.0 150.0
+"""
+
+SYNTHETIC_IMAGES_TXT = """# synthetic, no real capture
+1 0.99 0.0 0.05 0.0 0.0 0.0 0.0 1 alpha.jpg
+0.0 0.0 -1
+2 1.0 0.0 0.0 0.0 1.2 0.0 0.2 2 beta.jpg
+0.0 0.0 -1
+"""
+
+
+def test_parse_colmap_cameras_and_images() -> None:
+    """Real-capture integration: COLMAP text exports use one distinct camera
+    per photo and commonly SIMPLE_RADIAL, not PINHOLE -- confirm the reader
+    Milestone 1.5A added handles both and rejects unknown models."""
+    with tempfile.TemporaryDirectory() as tmp:
+        cameras_path = Path(tmp) / "cameras.txt"
+        images_path = Path(tmp) / "images.txt"
+        cameras_path.write_text(SYNTHETIC_CAMERAS_TXT, encoding="utf-8")
+        images_path.write_text(SYNTHETIC_IMAGES_TXT, encoding="utf-8")
+
+        cameras = parse_colmap_cameras_txt(cameras_path)
+        assert set(cameras.keys()) == {"1", "2"}
+        assert cameras["1"].fx == cameras["1"].fy == 350.0  # SIMPLE_RADIAL: shared focal, distortion ignored.
+        assert cameras["2"].fx == 360.0 and cameras["2"].fy == 355.0  # PINHOLE: independent fx/fy.
+
+        camera_ids = parse_colmap_image_camera_ids(images_path)
+        assert camera_ids == {"alpha.jpg": "1", "beta.jpg": "2"}
+
+        intrinsics = load_real_camera_intrinsics(cameras_path, images_path)
+        assert set(intrinsics.keys()) == {"alpha.jpg", "beta.jpg"}
+        assert intrinsics["alpha.jpg"].width == 400 and intrinsics["alpha.jpg"].height == 300
+
+        bad_cameras = Path(tmp) / "bad-cameras.txt"
+        bad_cameras.write_text("1 OPENCV 400 300 1 2 3 4 5 6 7 8\n", encoding="utf-8")
+        try:
+            parse_colmap_cameras_txt(bad_cameras)
+            raise AssertionError("expected ValueError for an unsupported camera model")
+        except ValueError:
+            pass
+
+
+def test_scale_camera_to_photo() -> None:
+    camera = default_camera_for_photo(4000, 3000)
+    same = scale_camera_to_photo(camera, 4000, 3000)
+    assert same is camera, "no rescale needed when the photo already matches calibration size"
+
+    preview = scale_camera_to_photo(camera, 768, 576)  # a real downscaled preview ratio (0.192x).
+    assert preview.width == 768 and preview.height == 576
+    scale = 768 / 4000
+    assert abs(preview.fx - camera.fx * scale) < 1e-6
+    assert abs(preview.cx - camera.cx * scale) < 1e-6
+
+
+def test_load_critical_mask_npz() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "risk-masks-synthetic.npz"
+        critical = np.zeros((30, 40), dtype=bool)
+        critical[5:10, 5:10] = True
+        np.savez_compressed(path, structural=np.zeros((30, 40), dtype=bool), object=np.zeros((30, 40), dtype=bool), critical=critical)
+        loaded = load_critical_mask_npz(path)
+        assert loaded.dtype == bool
+        assert loaded.sum() == 25
+
+
+def test_build_depth_layers_threads_critical_mask_without_altering_pixels() -> None:
+    """A real critical mask (e.g. faces/artwork) must be reported in the
+    provenance/critical bookkeeping without ever changing which real photo
+    pixels are shown -- fidelity is identical with or without it."""
+    rng = np.random.default_rng(31)
+    photo = make_synthetic_photo(rng)
+    height, width = photo.shape[:2]
+    camera = default_camera_for_photo(width, height)
+    points = make_synthetic_points(rng, np.zeros(3))
+    quaternion = np.array([1.0, 0.0, 0.0, 0.0])
+    center = np.zeros(3)
+
+    critical_mask = np.zeros((height, width), dtype=bool)
+    critical_mask[10:40, 10:40] = True
+
+    plain = build_depth_layers(photo, points, center, quaternion, camera, layers=3)
+    with_mask = build_depth_layers(photo, points, center, quaternion, camera, layers=3, critical_mask=critical_mask)
+
+    # The critical mask may steer bounded local depth *filling* (a critical
+    # region is never smoothed over), so per-layer bucketing can differ --
+    # but the union of visible pixels must still be byte-exact to the source
+    # photo and every pixel must still be shown, with or without the mask.
+    for result in (plain, with_mask):
+        covered = np.zeros((height, width), dtype=bool)
+        for record in result["layers"]:
+            opaque = record["rgba"][:, :, 3] > 0
+            assert np.array_equal(record["rgba"][opaque][:, :3], photo[opaque]), "hero pixels must stay byte-exact regardless of critical mask"
+            covered |= opaque
+        assert covered.all(), "every hero photo pixel must remain visible across the depth layers"
+
+    assert with_mask["criticalMask"] is not None
+    assert with_mask["criticalMask"].sum() == critical_mask.sum()
+    assert with_mask["criticalPixelPercent"] > 0.0
+    assert plain["criticalMask"] is None
+    assert plain["criticalPixelPercent"] == 0.0
+
+    resized_mask = np.zeros((10, 10), dtype=bool)
+    resized_mask[2:5, 2:5] = True
+    resized_result = build_depth_layers(photo, points, center, quaternion, camera, layers=3, critical_mask=resized_mask)
+    assert resized_result["criticalMask"].shape == (height, width), "a mismatched-resolution critical mask must be resized to the photo"
+
+
+def test_render_provenance_screenshot_uses_real_codes_only() -> None:
+    rng = np.random.default_rng(9)
+    photo = make_synthetic_photo(rng)
+    height, width = photo.shape[:2]
+    provenance = np.full((height, width), ABSENT, dtype=np.uint8)
+    provenance[:height // 2, :] = OBSERVED
+    provenance[height // 2:height // 2 + 5, :] = INFERRED
+    critical = np.zeros((height, width), dtype=bool)
+    critical[5:15, 5:15] = True
+
+    overlay = render_provenance_screenshot(photo, provenance, critical)
+    assert overlay.shape == photo.shape
+    assert not np.array_equal(overlay, photo), "provenance overlay must visibly tint the photo"
+    # Untouched (fully ABSENT, non-critical) region far from any tint/outline stays close to source.
+    untouched = overlay[height - 3:, width - 3:]
+    source = photo[height - 3:, width - 3:]
+    assert np.abs(untouched.astype(int) - source.astype(int)).max() <= 60
+
+
+def test_load_pose_overrides_and_run_photo_corridor_uses_them() -> None:
+    """Reproduces the real Milestone 1.5A finding: the reused spatial graph
+    can come from a DIFFERENT reconstruction run than the dense evidence
+    (different coordinate frame/scale). A pose override for a hero name
+    must replace that hero's graph-node pose so depth projection uses the
+    coordinate frame that actually matches `points_xyz`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        images_path = Path(tmp) / "images.txt"
+        images_path.write_text(SYNTHETIC_IMAGES_TXT, encoding="utf-8")
+        overrides = load_pose_overrides(images_path)
+        assert set(overrides.keys()) == {"alpha.jpg", "beta.jpg"}
+        assert np.allclose(overrides["beta.jpg"]["center"], [-1.2, 0.0, -0.2], atol=1e-6)  # identity rotation: center = -translation
+
+        rng = np.random.default_rng(44)
+        graph = make_synthetic_graph()
+        # Deliberately WRONG graph-node pose for "b.jpg" (as if from a
+        # mismatched reconstruction run) -- points would not project there.
+        graph["nodes"][1]["center"] = [500.0, 500.0, 500.0]
+        photos_dir = Path(tmp) / "photos"
+        photos_dir.mkdir()
+        for name in ("a.jpg", "b.jpg"):
+            cv2.imwrite(str(photos_dir / name), make_synthetic_photo(rng))
+        points = make_synthetic_points(rng, np.array([1.2, 0.0, 0.2]))  # points are near the REAL "b.jpg" pose.
+
+        with tempfile.TemporaryDirectory() as out_tmp:
+            output = Path(out_tmp)
+            pose_overrides = {"b.jpg": {"center": [1.2, 0.0, 0.2], "quaternion": [0.99, 0.0, 0.05, 0.0]}}
+            metrics = run_photo_corridor(
+                graph, photos_dir, points, output,
+                hero_a="a.jpg", hero_b="b.jpg", pose_overrides=pose_overrides,
+            )
+            assert metrics["heroBDepthProvenance"]["depthObservedPercent"] > 0.0
+            assert (output / "reference").exists()
+            assert (output / "entry-screenshot.png").exists()
+            assert (output / "mid-corridor.png").exists()
+            assert (output / "hero-b-destination-screenshot.png").exists()
+            assert (output / "provenance").exists()
+            assert metrics["rawRecording"]["frameCount"] == 9  # 4 hero-A + 1 shell + 4 hero-B offsets.
+
+
+def test_render_raw_recording_fails_closed_without_ffmpeg_path_and_frames() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        output_dir = Path(tmp)
+        empty_result = render_raw_recording([], output_dir, duration_s=15.0)
+        assert empty_result["produced"] is False
+        assert empty_result["blocker"] is not None
+
+        frame_paths = []
+        for index in range(3):
+            frame = np.full((20, 20, 3), index * 40, dtype=np.uint8)
+            path = output_dir / f"frame-{index}.png"
+            cv2.imwrite(str(path), frame)
+            frame_paths.append(path)
+        result = render_raw_recording(frame_paths, output_dir, duration_s=999.0)
+        assert MIN_DURATION_S <= result["expectedDurationSeconds"] <= MAX_DURATION_S
+        assert result["style"] == "hard-cut, no crossfade (raw, unpolished)"
+        assert result["frameCount"] == 3
+        # ffmpeg may or may not be installed in the test environment; either
+        # outcome must be reported truthfully, never silently fabricated.
+        if result["ffmpegAvailable"]:
+            assert result["produced"] is True and result["outputPath"] is not None
+        else:
+            assert result["produced"] is False and result["blocker"] is not None
+
+
 def main() -> None:
     tests = [
         test_hero_pair_selection,
@@ -226,6 +428,13 @@ def main() -> None:
         test_composite_offset_frame_shifts_layers,
         test_walkthrough_duration_clamped_and_raw,
         test_sha256_bytes_matches_hashlib,
+        test_parse_colmap_cameras_and_images,
+        test_scale_camera_to_photo,
+        test_load_critical_mask_npz,
+        test_build_depth_layers_threads_critical_mask_without_altering_pixels,
+        test_render_provenance_screenshot_uses_real_codes_only,
+        test_load_pose_overrides_and_run_photo_corridor_uses_them,
+        test_render_raw_recording_fails_closed_without_ffmpeg_path_and_frames,
     ]
     for test in tests:
         test()
