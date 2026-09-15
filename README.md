@@ -30,6 +30,7 @@ The project uses Kotlin and AndroidX. It targets Android 15 (API 35) and support
 - [Milestone 1.1 founder steering report](docs/MILESTONE-1.1-FOUNDER-REPORT.md)
 - [Milestone 1.2 founder steering report](docs/MILESTONE-1.2-FOUNDER-REPORT.md)
 - [Milestone 1.3 founder steering report](docs/MILESTONE-1.3-FOUNDER-REPORT.md)
+- [Milestone 1.3A founder steering report](docs/MILESTONE-1.3A-FOUNDER-REPORT.md)
 - [Development guide](docs/DEVELOPMENT.md)
 - [Contributing](CONTRIBUTING.md)
 

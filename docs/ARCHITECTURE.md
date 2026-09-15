@@ -133,3 +133,14 @@ separate debug/provenance mode for internal review. All assets are
 pre-generated; a deterministic backup recording (ffmpeg `xfade` over a fixed
 frame sequence) is produced locally so the demo can run without live
 inference if needed.
+
+Milestone 1.3A resolves the unconstrained inpainting candidate rejections by
+using deterministic structural Imagine output as initialization for missing
+faces, followed by low-strength IP-Adapter memory-conditioned refinement
+(`strength = 0.35–0.55`). The deterministic base anchors planar wall geometry
+and edge boundaries, while low-strength refinement infuses photographic
+lighting and palette from ranked source views without triggering semantic
+hallucinations (doors, windows, sky, signage). All protected pixels remain
+bit-exact, critical regions remain absent, and generated pixels maintain
+strict IMAGINED provenance under the unchanged Milestone 1.3 semantic
+consistency validator.

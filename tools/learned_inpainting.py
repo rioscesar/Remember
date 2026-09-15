@@ -52,6 +52,7 @@ class LearnedInpaintingConfig:
     ip_adapter_weight_name: str = DEFAULT_IP_ADAPTER_WEIGHT_NAME
     ip_adapter_scale: float = 0.5
     context_image: np.ndarray | None = None
+    strength: float = 1.0
 
 
 @dataclass
@@ -232,7 +233,10 @@ def run_learned_inpainting(
             # Runner test seam support
             import inspect
             sig = inspect.signature(runner)
-            if len(sig.parameters) >= 4:
+            params = sig.parameters
+            if len(params) >= 5 or ('strength' in params):
+                generated_rgb = runner(resized_rgb, resized_mask, prompt, context_rgb, config.strength)
+            elif len(params) >= 4:
                 generated_rgb = runner(resized_rgb, resized_mask, prompt, context_rgb)
             else:
                 generated_rgb = runner(resized_rgb, resized_mask, prompt)
@@ -265,6 +269,8 @@ def run_learned_inpainting(
                 "guidance_scale": config.guidance_scale,
                 "generator": generator,
             }
+            if config.strength < 1.0:
+                kwargs["strength"] = float(config.strength)
             if config.use_ip_adapter and context_rgb is not None:
                 kwargs["ip_adapter_image"] = Image.fromarray(context_rgb)
 
@@ -292,6 +298,7 @@ def run_learned_inpainting(
         "generatablePixels": int(generatable.sum()),
         "lockedPixels": int(locked_mask.sum()),
         "criticalPixels": int(critical_mask.sum()),
+        "strength": config.strength,
         "useIpAdapter": config.use_ip_adapter,
         "ipAdapterModel": config.ip_adapter_model_id if config.use_ip_adapter else None,
         "ipAdapterScale": config.ip_adapter_scale if config.use_ip_adapter else None,

@@ -203,6 +203,7 @@ def generate_face_candidates(
     allow_model_download: bool = False,
     package_path: Path | None = None,
     max_candidates: int = MAX_CANDIDATES_PER_FACE,
+    strength: float = 1.0,
 ) -> tuple[dict | None, list[CandidateReport]]:
     """Generate up to `max_candidates` fixed-seed candidates for one face.
 
@@ -239,6 +240,7 @@ def generate_face_candidates(
             use_ip_adapter=context_crop is not None,
             ip_adapter_scale=ip_adapter_scale,
             context_image=context_crop,
+            strength=strength,
         )
         result = run_learned_inpainting(
             base_color, base_provenance, masks["generatable"], masks["locked"], critical_mask,
