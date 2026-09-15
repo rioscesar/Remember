@@ -8,10 +8,10 @@ All four candidate rejections from Milestone 1.3 were analyzed from private arti
 
 | Candidate | Face | Seed | Context photo | Strength | Initialization | Rejection reason | Root cause diagnosis |
 |---|---|---|---|---|---|---|---|
-| 1 | `back` | 1301 | `20260709_192540.jpg` | 1.00 | None (unconstrained) | Unexpected semantic additions (19.5%) exceed tolerance (15.0%) | Full unconstrained inpainting at strength 1.0 hallucinated interior door/window and sky structures into a plain wall. |
-| 2 | `back` | 1301 | `20260709_192425.jpg` | 1.00 | None (unconstrained) | Unexpected semantic additions (45.5%) exceed tolerance (15.0%) | Unconstrained inpainting with Context B produced substantial non-wall structures and furniture, causing 45.5% unexpected additions. |
-| 3 | `right` | 1301 | `20260709_192540.jpg` | 1.00 | None (unconstrained) | Detected unsupported signage/text in structural wall | Unconstrained generation hallucinated an ADE20K signboard/poster semantic class, violating the zero-unsupported-signage rule. |
-| 4 | `right` | 1301 | `20260709_192425.jpg` | 1.00 | None (unconstrained) | Unexpected semantic additions (46.8%) exceed tolerance (15.0%) | Unconstrained generation with Context B introduced massive non-structural furniture and objects (46.8%), failing semantic tolerance. |
+| 1 | `back` | 1301 | Context A (ranked #1) | 1.00 | None (unconstrained) | Unexpected semantic additions (19.5%) exceed tolerance (15.0%) | Full unconstrained inpainting at strength 1.0 hallucinated interior door/window and sky structures into a plain wall. |
+| 2 | `back` | 1301 | Context B (ranked #2) | 1.00 | None (unconstrained) | Unexpected semantic additions (45.5%) exceed tolerance (15.0%) | Unconstrained inpainting with Context B produced substantial non-wall structures and furniture, causing 45.5% unexpected additions. |
+| 3 | `right` | 1301 | Context A (ranked #1) | 1.00 | None (unconstrained) | Detected unsupported signage/text in structural wall | Unconstrained generation hallucinated an ADE20K signboard/poster semantic class, violating the zero-unsupported-signage rule. |
+| 4 | `right` | 1301 | Context B (ranked #2) | 1.00 | None (unconstrained) | Unexpected semantic additions (46.8%) exceed tolerance (15.0%) | Unconstrained generation with Context B introduced massive non-structural furniture and objects (46.8%), failing semantic tolerance. |
 
 **Key Finding**: The rejection was not a failure of IP-Adapter conditioning or the semantic validator; it was the consequence of unconstrained diffusion (`strength = 1.0`) hallucinating semantic structures from random noise when asked to inpaint large blank regions. Initializing the generative canvas with deterministic structural Imagine and lowering denoise strength keeps generation anchored to planar wall geometry while still benefiting from visual memory conditioning.
 

@@ -6,12 +6,12 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-# Ensure learned packages and tools are in sys.path immediately
-_PKG_DIR = Path(r"C:\Users\riosc\.copilot\session-state\f7b0095f-4374-4b1c-a655-bdbc61baba17\files\learned-inpainting-packages")
-if _PKG_DIR.exists():
-    os.environ["REMEMBER_LEARNED_PYTHONPATH"] = str(_PKG_DIR)
-    if str(_PKG_DIR) not in sys.path:
-        sys.path.insert(0, str(_PKG_DIR))
+# Ensure learned packages and tools are in sys.path when configured
+_PKG_PATH_RAW = os.environ.get("REMEMBER_LEARNED_PYTHONPATH", "").strip()
+if _PKG_PATH_RAW:
+    _pkg_path = Path(_PKG_PATH_RAW)
+    if _pkg_path.exists() and str(_pkg_path) not in sys.path:
+        sys.path.insert(0, str(_pkg_path))
 
 _TOOLS_DIR = Path(__file__).resolve().parent
 if str(_TOOLS_DIR) not in sys.path:
@@ -300,7 +300,7 @@ def run_milestone13a_comparison(
                 "flaggedCategories": consistency.semantic_additions.flagged_categories,
                 "failReasons": consistency.semantic_additions.fail_reasons,
                 "accepted": is_accepted,
-                "savedPath": str(cand_file),
+                "savedPath": cand_file.name,
             }
             back_candidate_reports.append(report_entry)
 
@@ -382,7 +382,7 @@ def run_milestone13a_comparison(
                 "flaggedCategories": consistency.semantic_additions.flagged_categories,
                 "failReasons": consistency.semantic_additions.fail_reasons,
                 "accepted": is_accepted,
-                "savedPath": str(cand_file),
+                "savedPath": cand_file.name,
             }
             right_candidate_reports.append(r_report)
             if is_accepted and accepted_right_candidate is None:
