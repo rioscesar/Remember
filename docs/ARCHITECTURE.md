@@ -144,3 +144,14 @@ hallucinations (doors, windows, sky, signage). All protected pixels remain
 bit-exact, critical regions remain absent, and generated pixels maintain
 strict IMAGINED provenance under the unchanged Milestone 1.3 semantic
 consistency validator.
+
+Milestone 1.4 adds a packaging boundary after validation. The freeze builder
+has no reconstruction or generation entry point: it verifies hard-coded
+SHA-256 identities for the accepted Remember atlas and the two accepted
+Milestone 1.3A learned faces, verifies their recorded seed/strength and
+protection results, and copies only those assets into an output directory
+that must be outside Git. The resulting presentation is a self-contained
+local HTML file with a restrictive Content Security Policy, a fixed five-stop
+Remember/Imagine path, reset and optional provenance controls, and a
+deterministic pre-rendered MP4. Startup performs no model loading, network
+access, inference, reconstruction, or live generation.

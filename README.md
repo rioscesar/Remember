@@ -31,6 +31,7 @@ The project uses Kotlin and AndroidX. It targets Android 15 (API 35) and support
 - [Milestone 1.2 founder steering report](docs/MILESTONE-1.2-FOUNDER-REPORT.md)
 - [Milestone 1.3 founder steering report](docs/MILESTONE-1.3-FOUNDER-REPORT.md)
 - [Milestone 1.3A founder steering report](docs/MILESTONE-1.3A-FOUNDER-REPORT.md)
+- [Milestone 1.4 founder review](docs/MILESTONE-1.4-FOUNDER-REPORT.md)
 - [Development guide](docs/DEVELOPMENT.md)
 - [Contributing](CONTRIBUTING.md)
 
@@ -52,6 +53,14 @@ Diffusers inpainting model is available and validates. The tool emits
 aggregate metrics and provenance-coded views in the requested output
 directory; private photos, poses, masks, models, and renders must remain
 outside the repository.
+
+Milestone 1.4 freezes an already accepted private walkthrough without invoking
+reconstruction or generation. `tools/milestone14_demo_freeze.py` accepts only
+the exact approved front/back/right asset hashes and the accepted 1.3/1.3A
+metrics, requires an output directory outside Git, and emits the minimal
+offline presentation bundle plus a deterministic 36-second backup video.
+`tools/milestone14_synthetic_test.py` validates the freeze contract without
+reading private data.
 
 ## Licensing
 
